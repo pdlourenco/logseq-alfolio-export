@@ -1,0 +1,13 @@
+{
+  "name": "logseq-alfolio-export",
+  "version": "0.1.0",
+  "description": "Export Logseq data to al-folio Jekyll site YAML files",
+  "main": "index.html",
+  "logseq": {
+    "id": "logseq-alfolio-export",
+    "title": "al-folio Export",
+    "icon": "icon.svg"
+  },
+  "author": "Pedro Lourenço",
+  "license": "MIT"
+}
