@@ -9,5 +9,13 @@
     "icon": "icon.svg"
   },
   "author": "Pedro Lourenço",
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
 }

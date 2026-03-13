@@ -853,4 +853,23 @@ function main() {
   ]);
 }
 
-logseq.ready(main).catch(console.error);
+if (typeof logseq !== "undefined") {
+  logseq.ready(main).catch(console.error);
+}
+
+// Expose internals for Node.js test environments
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    toYAML,
+    stripBrackets, extractRefs, convertDate,
+    parseCommaSeparatedRefs, parsePeopleRefs, parseMarkdownLink,
+    extractBlockTitle, cleanProp, rawProp,
+    ResolutionCache,
+    extractNamespaceEntries, findWebsitePages,
+    transformExperience, transformEducation, transformAwards,
+    transformSkills, transformLanguages, transformResearchInterests,
+    transformStudents, transformProjects,
+    transformProfile, transformPersonalPage, transformPublicationOverrides,
+    runExport,
+  };
+}
