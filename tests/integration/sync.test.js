@@ -228,6 +228,18 @@ describe('sync.sh', () => {
       expect(stderr.join('')).toMatch(/manifest\.json may be malformed/);
     });
 
+    test('handles a graph path containing a quote', () => {
+      const quoted = path.join(tmp, "pedro's graph");
+      fs.mkdirSync(quoted, { recursive: true });
+      const graph = makeGraph(quoted);
+      const site = makeSite(tmp);
+
+      const stdout = runSync(['--graph', graph, '--site', site]);
+
+      expect(stdout).toMatch(/Export from: 2026-01-01/);
+      expect(fs.existsSync(path.join(site, '_incoming', 'cv.yml'))).toBe(true);
+    });
+
     test('succeeds when there are no blog posts', () => {
       const graph = makeGraph(tmp, { withBlog: false });
       const site = makeSite(tmp);

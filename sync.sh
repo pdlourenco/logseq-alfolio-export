@@ -124,15 +124,17 @@ echo ""
 # Validating the manifest's contents is a separate job from copying it.
 # ============================================================================
 if command -v python3 &>/dev/null; then
-  if ! python3 -c "
-import json
-with open('$EXPORT_DIR/manifest.json') as f:
+  # The path is passed as an argument rather than interpolated into the source,
+  # so a graph directory containing a quote does not break the script.
+  if ! python3 -c '
+import json, sys
+with open(sys.argv[1]) as f:
     m = json.load(f)
-print(f\"Export from: {m.get('exported_at', 'unknown')}\")
-print('Counts:')
-for k, v in m.get('counts', {}).items():
-    print(f'  {k}: {v}')
-" 2>/dev/null; then
+print("Export from: {}".format(m.get("exported_at", "unknown")))
+print("Counts:")
+for k, v in m.get("counts", {}).items():
+    print("  {}: {}".format(k, v))
+' "$EXPORT_DIR/manifest.json" 2>/dev/null; then
     echo "⚠️  Could not read the manifest summary — manifest.json may be malformed." >&2
     echo "   The files above were still copied." >&2
   fi
