@@ -6,7 +6,7 @@
 // because the rest of the suite covers index.js only and would not catch a
 // regression here.
 
-const { execFileSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -16,7 +16,7 @@ const PLUGIN_ID = 'logseq-alfolio-export';
 const EXPORT_PREFIX = '_logseq_export';
 
 /** A graph whose sandbox storage holds a complete export. */
-function makeGraph(root, { withBlog = true, withManifest = true } = {}) {
+function makeGraph(root, { withBlog = true, withManifest = true, manifestContent = null } = {}) {
   const exportDir = path.join(
     root, 'graph', '.logseq', 'plugins', 'storages', PLUGIN_ID, EXPORT_PREFIX,
   );
@@ -30,7 +30,8 @@ function makeGraph(root, { withBlog = true, withManifest = true } = {}) {
   if (withManifest) {
     fs.writeFileSync(
       path.join(exportDir, 'manifest.json'),
-      JSON.stringify({ exported_at: '2026-01-01T00:00:00.000Z', counts: { experience: 1 } }, null, 2),
+      manifestContent
+        ?? JSON.stringify({ exported_at: '2026-01-01T00:00:00.000Z', counts: { experience: 1 } }, null, 2),
     );
   }
   if (withBlog) {
@@ -58,12 +59,22 @@ function makeSite(root) {
   return siteDir;
 }
 
-function runSync(args, env = {}) {
-  return execFileSync('bash', [SYNC_SH, ...args], {
+/**
+ * Run sync.sh, throwing on a non-zero exit. `stderrOut`, when given, collects
+ * the script's stderr so a test can assert on warnings.
+ */
+function runSync(args, env = {}, stderrOut = null) {
+  const result = spawnSync('bash', [SYNC_SH, ...args], {
     encoding: 'utf8',
     // Strip inherited GRAPH_DIR/SITE_DIR so the test controls them entirely.
+    // Node omits undefined-valued keys when building the child's environment.
     env: { ...process.env, GRAPH_DIR: undefined, SITE_DIR: undefined, ...env },
   });
+  if (stderrOut) stderrOut.push(result.stderr);
+  if (result.status !== 0) {
+    throw new Error(`sync.sh exited ${result.status}\n${result.stderr}`);
+  }
+  return result.stdout;
 }
 
 describe('sync.sh', () => {
@@ -168,6 +179,14 @@ describe('sync.sh', () => {
       expect(() => runSync(['--graph', graph, '--site', path.join(tmp, 'nope')])).toThrow();
     });
 
+    test('reports a flag given without a value instead of failing silently', () => {
+      const site = makeSite(tmp);
+
+      const stderr = [];
+      expect(() => runSync(['--site', site, '--graph'], {}, stderr)).toThrow();
+      expect(stderr.join('')).toMatch(/--graph requires a path/);
+    });
+
     test('honours SITE_DIR from the environment', () => {
       const graph = makeGraph(tmp);
       const site = makeSite(tmp);
@@ -192,6 +211,21 @@ describe('sync.sh', () => {
 
       expect(() => runSync(['--graph', graph, '--site', site])).toThrow();
       expect(fs.existsSync(path.join(site, '_incoming'))).toBe(false);
+    });
+
+    // The summary block runs after every copy has already happened, so it must
+    // never decide the exit status: a wrapper reading the code would otherwise
+    // treat a completed sync as a failure and possibly re-run it.
+    test('still succeeds when manifest.json is not valid JSON', () => {
+      const graph = makeGraph(tmp, { manifestContent: 'NOT JSON{' });
+      const site = makeSite(tmp);
+
+      const stderr = [];
+      expect(() => runSync(['--graph', graph, '--site', site], {}, stderr)).not.toThrow();
+
+      expect(fs.existsSync(path.join(site, '_incoming', 'cv.yml'))).toBe(true);
+      expect(fs.readFileSync(path.join(site, '_incoming', 'manifest.json'), 'utf8')).toBe('NOT JSON{');
+      expect(stderr.join('')).toMatch(/manifest\.json may be malformed/);
     });
 
     test('succeeds when there are no blog posts', () => {

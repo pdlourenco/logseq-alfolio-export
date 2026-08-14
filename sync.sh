@@ -34,10 +34,19 @@ EOF
 # ============================================================================
 # Parse arguments
 # ============================================================================
+require_value() {
+  # $1 = flag name, $2 = number of args remaining including the flag itself.
+  if [ "$2" -lt 2 ]; then
+    echo "❌ $1 requires a path." >&2
+    usage
+    exit 2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --graph) GRAPH_DIR="${2:-}"; shift 2 ;;
-    --site)  SITE_DIR="${2:-}";  shift 2 ;;
+    --graph) require_value --graph $#; GRAPH_DIR="$2"; shift 2 ;;
+    --site)  require_value --site  $#; SITE_DIR="$2";  shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -108,9 +117,14 @@ echo ""
 
 # ============================================================================
 # Show export summary
+#
+# Cosmetic only, and deliberately not allowed to fail the run: every file has
+# already been copied by this point, so a manifest this cannot parse must not
+# turn a successful sync into a non-zero exit for whatever is wrapping us.
+# Validating the manifest's contents is a separate job from copying it.
 # ============================================================================
 if command -v python3 &>/dev/null; then
-  python3 -c "
+  if ! python3 -c "
 import json
 with open('$EXPORT_DIR/manifest.json') as f:
     m = json.load(f)
@@ -118,7 +132,10 @@ print(f\"Export from: {m.get('exported_at', 'unknown')}\")
 print('Counts:')
 for k, v in m.get('counts', {}).items():
     print(f'  {k}: {v}')
-"
+" 2>/dev/null; then
+    echo "⚠️  Could not read the manifest summary — manifest.json may be malformed." >&2
+    echo "   The files above were still copied." >&2
+  fi
 fi
 
 echo ""
