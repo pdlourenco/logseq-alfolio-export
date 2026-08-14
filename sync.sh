@@ -1,77 +1,106 @@
 #!/usr/bin/env bash
 # ============================================================================
-# sync.sh — Copy exported YAML from Logseq plugin storage to Jekyll site
+# sync.sh — Copy exported files from Logseq plugin storage into the site repo
 # ============================================================================
 #
 # Usage:
-#   ./sync.sh [--graph /path/to/logseq/graph] [--site /path/to/jekyll/site]
+#   ./sync.sh --site /path/to/jekyll/site [--graph /path/to/logseq/graph]
 #
-# Defaults (configure these or pass as arguments):
+# This script copies the export into the site's `_incoming/` directory and
+# nowhere else. `_incoming/` holds the intermediate format verbatim; the site
+# repo's own `bin/transform.py` is the only thing that writes `_data/`,
+# `_posts/`, and `_bibliography/`. Writing those directly from here would
+# overwrite generated files with a format the site does not read.
+#
+set -euo pipefail
+
 GRAPH_DIR="${GRAPH_DIR:-$HOME/logseq}"
-SITE_DIR="${SITE_DIR:-$HOME/pdlourenco.github.io}"
+SITE_DIR="${SITE_DIR:-}"
 PLUGIN_ID="logseq-alfolio-export"
 EXPORT_PREFIX="_logseq_export"
+
+usage() {
+  cat >&2 <<EOF
+Usage: $0 --site /path/to/jekyll/site [--graph /path/to/logseq/graph]
+
+  --site   Path to the Jekyll site checkout. Required — there is no default,
+           so a stray run cannot touch a real site repo by accident.
+  --graph  Path to the Logseq graph. Defaults to \$GRAPH_DIR or ~/logseq.
+
+Files are copied into <site>/_incoming/ only.
+EOF
+}
 
 # ============================================================================
 # Parse arguments
 # ============================================================================
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --graph) GRAPH_DIR="$2"; shift 2 ;;
-    --site)  SITE_DIR="$2";  shift 2 ;;
-    *) echo "Unknown option: $1"; exit 1 ;;
+    --graph) GRAPH_DIR="${2:-}"; shift 2 ;;
+    --site)  SITE_DIR="${2:-}";  shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+if [ -z "$SITE_DIR" ]; then
+  echo "❌ No site directory given. Pass --site or set SITE_DIR." >&2
+  usage
+  exit 2
+fi
+
+if [ ! -d "$SITE_DIR" ]; then
+  echo "❌ Site directory does not exist: $SITE_DIR" >&2
+  exit 2
+fi
 
 # ============================================================================
 # Locate export directory
 # ============================================================================
-# Plugin sandbox storage lives at:
-#   <graph>/.logseq/plugins/storages/<plugin-id>/
 EXPORT_DIR="$GRAPH_DIR/.logseq/plugins/storages/$PLUGIN_ID/$EXPORT_PREFIX"
 
 if [ ! -d "$EXPORT_DIR" ]; then
-  echo "❌ Export directory not found: $EXPORT_DIR"
-  echo "   Have you run the export from Logseq?"
+  echo "❌ Export directory not found: $EXPORT_DIR" >&2
+  echo "   Have you run the export from Logseq?" >&2
   exit 1
 fi
 
 if [ ! -f "$EXPORT_DIR/manifest.json" ]; then
-  echo "❌ No manifest.json found. Export may be incomplete."
+  echo "❌ No manifest.json found. Export may be incomplete." >&2
   exit 1
 fi
 
+INCOMING_DIR="$SITE_DIR/_incoming"
+
 echo "📦 Syncing from: $EXPORT_DIR"
-echo "📂 To site:      $SITE_DIR"
+echo "📂 To:           $INCOMING_DIR"
 echo ""
+
+mkdir -p "$INCOMING_DIR"
 
 # ============================================================================
 # Copy data files
 # ============================================================================
-DATA_DIR="$SITE_DIR/_data"
-mkdir -p "$DATA_DIR"
-
 for f in cv.yml profile.yml personal.yml publication_overrides.yml; do
   if [ -f "$EXPORT_DIR/$f" ]; then
-    cp "$EXPORT_DIR/$f" "$DATA_DIR/$f"
-    echo "  ✅ $f → _data/$f"
+    cp "$EXPORT_DIR/$f" "$INCOMING_DIR/$f"
+    echo "  ✅ $f → _incoming/$f"
   fi
 done
 
-# Copy manifest for reference
-cp "$EXPORT_DIR/manifest.json" "$DATA_DIR/export_manifest.json"
-echo "  ✅ manifest.json → _data/export_manifest.json"
+# The manifest keeps its name: the transform reads _incoming/manifest.json.
+cp "$EXPORT_DIR/manifest.json" "$INCOMING_DIR/manifest.json"
+echo "  ✅ manifest.json → _incoming/manifest.json"
 
 # ============================================================================
 # Copy blog posts
 # ============================================================================
 if [ -d "$EXPORT_DIR/blog" ]; then
-  POSTS_DIR="$SITE_DIR/_posts"
-  mkdir -p "$POSTS_DIR"
+  mkdir -p "$INCOMING_DIR/blog"
   for f in "$EXPORT_DIR/blog/"*.md; do
     [ -f "$f" ] || continue
-    cp "$f" "$POSTS_DIR/$(basename "$f")"
-    echo "  ✅ blog/$(basename "$f") → _posts/$(basename "$f")"
+    cp "$f" "$INCOMING_DIR/blog/$(basename "$f")"
+    echo "  ✅ blog/$(basename "$f") → _incoming/blog/$(basename "$f")"
   done
 fi
 
@@ -82,15 +111,16 @@ echo ""
 # ============================================================================
 if command -v python3 &>/dev/null; then
   python3 -c "
-import json, sys
+import json
 with open('$EXPORT_DIR/manifest.json') as f:
     m = json.load(f)
-print(f\"Export from: {m['exported_at']}\")
-print(f\"Counts:\")
+print(f\"Export from: {m.get('exported_at', 'unknown')}\")
+print('Counts:')
 for k, v in m.get('counts', {}).items():
-    print(f\"  {k}: {v}\")
+    print(f'  {k}: {v}')
 "
 fi
 
 echo ""
-echo "✅ Sync complete. Run 'cd $SITE_DIR && bundle exec jekyll serve' to preview."
+echo "✅ Sync complete. Review the diff in $INCOMING_DIR, commit it, then run"
+echo "   the site's transform to regenerate _data/ and _posts/."

@@ -18,12 +18,21 @@ A Logseq plugin that exports your academic CV, projects, students, and personal 
                                                     │
                                               sync.sh │
                                                     ▼
-                                             ┌──────────────┐
-                                             │  Jekyll site │
-                                             │  _data/*.yml │
-                                             │  _posts/*.md │
-                                             └──────────────┘
+                                             ┌──────────────┐     ┌──────────────┐
+                                             │  Site repo   │────▶│  Jekyll site │
+                                             │  _incoming/  │     │  _data/*.yml │
+                                             │  (verbatim)  │     │  _posts/*.md │
+                                             └──────────────┘     └──────────────┘
+                                                            transform.py
+                                                          (in the site repo)
 ```
+
+This plugin's output is an **intermediate format**, not al-folio's format. It
+lands in the site repo's `_incoming/` directory exactly as exported; the site's
+own `bin/transform.py` is the only thing that writes `_data/`, `_posts/`, and
+`_bibliography/`. See the [contract v1
+schemas](https://github.com/pdlourenco/pdlourenco.github.io/tree/master/docs/intermediate-schema)
+for the normative shape of each file.
 
 ## Installation
 
@@ -51,19 +60,27 @@ A Logseq plugin that exports your academic CV, projects, students, and personal 
 After exporting, run the companion script to copy files to your Jekyll site:
 
 ```bash
-# Using defaults (configure GRAPH_DIR and SITE_DIR in the script)
-./sync.sh
+./sync.sh --site ~/pdlourenco.github.io
 
-# Or with explicit paths
+# --graph defaults to $GRAPH_DIR or ~/logseq
 ./sync.sh --graph ~/logseq --site ~/pdlourenco.github.io
 ```
 
-The sync script copies:
-- `cv.yml` → `_data/cv.yml`
-- `profile.yml` → `_data/profile.yml`
-- `personal.yml` → `_data/personal.yml`
-- `publication_overrides.yml` → `_data/publication_overrides.yml`
-- `blog/*.md` → `_posts/*.md`
+`--site` is required and has no default, so a stray `./sync.sh` cannot reach a
+real site checkout by accident.
+
+The sync script copies into `_incoming/` and nowhere else:
+- `cv.yml` → `_incoming/cv.yml`
+- `profile.yml` → `_incoming/profile.yml`
+- `personal.yml` → `_incoming/personal.yml`
+- `publication_overrides.yml` → `_incoming/publication_overrides.yml`
+- `manifest.json` → `_incoming/manifest.json`
+- `blog/*.md` → `_incoming/blog/*.md`
+
+Then review the diff in `_incoming/`, commit it, and run the site's transform to
+regenerate `_data/` and `_posts/`. **Nothing here writes those directories** —
+they are generated files, and overwriting them with intermediate-format YAML
+makes the CV page render blank with no error.
 
 ## What gets exported
 
@@ -170,7 +187,12 @@ To add new entity types:
 1. Add a transformer function (`transformXxx`)
 2. Add extraction in `runExport()`
 3. Add the data to the appropriate YAML output
-4. Update `sync.sh` if the file goes to a new location
+4. Add the file to `sync.sh`'s copy list if it is a new file
+
+Changing the *shape* of an existing output file is a contract change — see
+`ROADMAP.md` for the versioning discipline that applies.
+
+Run the tests with `npm test`.
 
 ## License
 
