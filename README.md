@@ -55,6 +55,33 @@ Command Palette → **"Export to al-folio (dry run — writes nothing)"** runs t
 whole pipeline and logs every file it would write, touching nothing on disk.
 Useful for checking what a graph change does to the output before committing to it.
 
+### Capturing graph shapes (plugin development)
+
+Command Palette → **"Capture graph shapes (for plugin development)"** dumps what
+Logseq actually hands the plugin, so the parsers can be checked against reality
+rather than against assumptions. It writes two files to plugin storage:
+
+| File | Contents | Sharing |
+|---|---|---|
+| `_logseq_capture/dump.json` | Raw `getAllPages()` / `getPageBlocksTree()` output — **your entire graph**, including untagged `Personal/` pages the export never touches | **Never commit or paste this.** It stays on your machine |
+| `_logseq_capture/shapes.json` | Property key names, the JS type each arrives as, and *redacted* value shapes — every letter becomes `a`, every digit `9` | Safe to share |
+
+A redacted shape keeps the structure and drops the content:
+
+```
+"Prof. [[Pedro Batista]]"  →  "aaaa. [[aaaaa aaaaaaa]]"
+"[[2022/07/15]]"           →  "[[9999/99/99]]"
+"[label](https://x.com)"   →  "[aaaaa](aaaaa://a.aaa)"
+```
+
+which is enough to answer whether `type::` arrives as a string or an array,
+whether keys keep their kebab-case, and whether markdown links survive — without
+revealing a single name.
+
+The capture also probes whether nested storage keys (`blog/post.md`) round-trip,
+and prints where to find the files, which answers where the sandbox actually
+writes.
+
 ### Validation warnings
 
 Every export lints the graph first and reports, without ever failing the export:

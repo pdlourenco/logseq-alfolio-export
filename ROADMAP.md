@@ -147,6 +147,24 @@ Closes issue #1 gaps 2–5. Must land before PR 3 so snapshots freeze a manifest
 
 ## PR 3 — Adapter seam + capture tooling + synthetic fixtures + snapshot contract tests
 
+**Split into 3a and 3b**, because the human step sits in the middle of it. 3a is
+everything buildable without the graph; 3b is everything downstream of the
+capture run. Building 3b before the run would mean inventing fixture shapes and
+snapshotting them as golden — the exact failure this roadmap's ordering argument
+exists to prevent, one level up.
+
+### PR 3a — buildable now (this phase)
+- `GraphReader` seam inside `index.js`: `FileGraphReader` (wraps the plugin API) and `FixtureGraphReader` (serves a dump). `ResolutionCache`, the extractors and `runExport` all take a reader; existing call sites keep working via a default.
+- Capture command writing two artefacts: `dump.json` (the whole graph — private, local, never committed) and `shapes.json` (key names, JS types, redacted value shapes — safe to share). Redaction maps every Unicode letter to `a` and digit to `9`, so structure survives and content does not.
+- Nested-storage-key probe, answering whether `blog/*.md` can be written as nested keys.
+- Privacy property test: arbitrary mixes of tagged/untagged `Personal/` pages, asserting untagged content never reaches any output file and never influences it.
+
+### PR 3b — after the capture run
+- Regenerate `tests/__fixtures__/` as synthetic data matching the observed shapes.
+- Snapshot contract tests over the regenerated fixtures.
+- Fix `README.md` and `sync.sh`'s *source* path once the real sandbox location is known.
+
+
 - **GraphReader seam inside `index.js`** (no module split): `readAllPages()`, `readPageBlocksTree(name)`, `query(dsl)`. `FileGraphReader` wraps `logseq.Editor.*` / `logseq.DB.*`; `FixtureGraphReader` loads a JSON dump. `ResolutionCache`, extractors, and `runExport` accept a reader. Migrate existing tests from `logseq.*` global mocks to `FixtureGraphReader` where that simplifies them.
 - **Capture command** (new palette command): dumps raw `getAllPages()` plus block trees per page as JSON to sandbox storage. Output is gitignored and **never committed** (may contain the full private graph).
 - **Human step — the only one in the roadmap**: repo owner runs capture on the real graph, and records (a) where `makeSandboxStorage()` actually writes, (b) whether nested keys (`blog/…`) work. Fix README + `sync.sh` *source* path accordingly (the destination was fixed in PR 0).

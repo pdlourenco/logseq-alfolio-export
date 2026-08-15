@@ -219,7 +219,8 @@ function rawProp(props, key) {
 // ============================================================================
 
 class ResolutionCache {
-  constructor() {
+  constructor(reader = defaultReader()) {
+    this.reader = reader;
     this.pageCache = {};      // pageName → { originalName, properties }
     this.aliasMap = {};       // alias → canonicalName
     this.iconMap = {};        // pageName → icon key
@@ -232,7 +233,7 @@ class ResolutionCache {
     console.log("[al-folio] Building resolution caches...");
 
     // Fetch all pages
-    const allPages = await logseq.Editor.getAllPages();
+    const allPages = await this.reader.readAllPages();
     if (!allPages) return;
 
     for (const page of allPages) {
@@ -351,6 +352,62 @@ class ResolutionCache {
       affiliation: affLabel,
     };
   }
+}
+
+// ============================================================================
+// Graph reading seam
+//
+// Every read of the graph goes through a reader. This is the insertion point
+// for a DB-graph implementation later (seed.md P3): the transformers below
+// know nothing about how pages arrive, so a second reader can be swapped in
+// without touching them.
+//
+// Deliberately a seam *inside* index.js rather than a module split — the
+// no-build-step constraint is part of this plugin's design.
+// ============================================================================
+
+/** Reads a file-based graph through the Logseq plugin API. */
+class FileGraphReader {
+  async readAllPages() {
+    return (await logseq.Editor.getAllPages()) || [];
+  }
+
+  async readPageBlocksTree(pageName) {
+    return (await logseq.Editor.getPageBlocksTree(pageName)) || [];
+  }
+
+  async query(dsl) {
+    return (await logseq.DB.datascriptQuery(dsl)) || [];
+  }
+}
+
+/**
+ * Reads a captured graph dump. Lets the whole pipeline run in plain Node with
+ * no Logseq present, which is what makes the export testable offline.
+ */
+class FixtureGraphReader {
+  constructor({ pages = [], blocksByPage = {}, queryResults = [] } = {}) {
+    this.pages = pages;
+    this.blocksByPage = blocksByPage;
+    this.queryResults = queryResults;
+  }
+
+  async readAllPages() {
+    return this.pages;
+  }
+
+  async readPageBlocksTree(pageName) {
+    return this.blocksByPage[pageName] || [];
+  }
+
+  async query() {
+    return this.queryResults;
+  }
+}
+
+/** The reader used when a caller does not supply one. */
+function defaultReader() {
+  return new FileGraphReader();
 }
 
 // ============================================================================
@@ -692,8 +749,8 @@ class ExportLint {
 // ============================================================================
 
 /** Extract properties from blocks on a namespace page (e.g., CV/Experience) */
-async function extractNamespaceEntries(pageName, cache) {
-  const blocks = await logseq.Editor.getPageBlocksTree(pageName);
+async function extractNamespaceEntries(pageName, cache, reader = cache?.reader || defaultReader()) {
+  const blocks = await reader.readPageBlocksTree(pageName);
   if (!blocks) return [];
 
   const entries = [];
@@ -730,10 +787,10 @@ async function extractNamespaceEntries(pageName, cache) {
 // query and this is that query — but it goes through getWebsiteName() like
 // everything else, so reviving it cannot silently select nothing on a graph
 // whose websiteName differs. PR 3 should adopt it into the reader or delete it.
-async function findWebsitePages(cache) {
+async function findWebsitePages(cache, reader = cache?.reader || defaultReader()) {
   const siteName = getWebsiteName();
   try {
-    const results = await logseq.DB.datascriptQuery(`
+    const results = await reader.query(`
       [:find (pull ?b [*])
        :where
        [?b :block/properties ?props]
@@ -1054,23 +1111,24 @@ async function runExport(options = {}) {
 
   try {
     // 1. Build resolution caches
-    const cache = new ResolutionCache();
+    const reader = options.reader || defaultReader();
+    const cache = new ResolutionCache(reader);
     await cache.build();
     const lint = new ExportLint(cache);
 
     // 2. Extract CV namespace pages
     const cvPages = {
-      experience: await extractNamespaceEntries("CV/Experience", cache),
-      education: await extractNamespaceEntries("CV/Education", cache),
-      awards: await extractNamespaceEntries("CV/Awards", cache),
-      skills: await extractNamespaceEntries("CV/Skills", cache),
-      languages: await extractNamespaceEntries("CV/Languages", cache),
-      researchInterests: await extractNamespaceEntries("CV/Research Interests", cache),
-      profile: await extractNamespaceEntries("CV/Profile", cache),
+      experience: await extractNamespaceEntries("CV/Experience", cache, reader),
+      education: await extractNamespaceEntries("CV/Education", cache, reader),
+      awards: await extractNamespaceEntries("CV/Awards", cache, reader),
+      skills: await extractNamespaceEntries("CV/Skills", cache, reader),
+      languages: await extractNamespaceEntries("CV/Languages", cache, reader),
+      researchInterests: await extractNamespaceEntries("CV/Research Interests", cache, reader),
+      profile: await extractNamespaceEntries("CV/Profile", cache, reader),
     };
 
     // 3. Scan standalone pages for the website:: tag (students, projects)
-    const allPages = await logseq.Editor.getAllPages();
+    const allPages = await reader.readAllPages();
     const siteName = getWebsiteName(lint.warnings);
     const standaloneEntries = [];
     for (const page of allPages || []) {
@@ -1078,7 +1136,7 @@ async function runExport(options = {}) {
       const w = String(props.website || "");
       if (!w.includes(siteName)) continue;
 
-      const blocks = await logseq.Editor.getPageBlocksTree(page.originalName || page.name);
+      const blocks = await reader.readPageBlocksTree(page.originalName || page.name);
       if (blocks) {
         for (const block of blocks) {
           if (block.properties && String(block.properties.website || "").includes(siteName)) {
@@ -1103,15 +1161,15 @@ async function runExport(options = {}) {
     }
 
     // 4. Extract the site namespace (page names follow the configured site)
-    const pubOverrides = await extractNamespaceEntries(`${siteName}/Publication Overrides`, cache);
-    const blogIdeas = await extractNamespaceEntries(`${siteName}/Blog Ideas`, cache);
+    const pubOverrides = await extractNamespaceEntries(`${siteName}/Publication Overrides`, cache, reader);
+    const blogIdeas = await extractNamespaceEntries(`${siteName}/Blog Ideas`, cache, reader);
 
     // 5. Extract Personal namespace (only website-tagged)
     const personalPages = {};
     for (const page of allPages || []) {
       const name = page.originalName || page.name;
       if (!name.startsWith("Personal/")) continue;
-      const blocks = await logseq.Editor.getPageBlocksTree(name);
+      const blocks = await reader.readPageBlocksTree(name);
       if (!blocks || blocks.length === 0) continue;
 
       const firstBlock = blocks[0];
@@ -1254,6 +1312,154 @@ async function runExport(options = {}) {
 }
 
 // ============================================================================
+// Graph capture — the empirical bridge (seed.md Priority 1)
+//
+// Nothing in this plugin has ever been checked against a real graph: every
+// assumption about what Logseq hands a plugin is a guess, and the committed
+// fixtures encode those guesses. This command answers the question by looking.
+//
+// It produces two artefacts, and the distinction matters:
+//
+//   dump.json    — the raw API responses. Contains the ENTIRE graph, including
+//                  untagged Personal/ pages that the export deliberately never
+//                  touches. Stays on the machine that produced it. Never
+//                  commit it, never paste it.
+//   shapes.json  — key names, JS types, and *redacted* value shapes, where
+//                  every letter becomes `a` and every digit `9`. Structure
+//                  survives, content does not. This is the safe one to share.
+// ============================================================================
+
+const CAPTURE_PREFIX = "_logseq_capture";
+
+/**
+ * Reduce a value to its shape: letters → `a`, digits → `9`, punctuation kept.
+ *
+ * `Prof. [[Pedro Batista]]` → `aaaa. [[aaaaa aaaaaaa]]`
+ * `[[2022/07/15]]`          → `[[9999/99/99]]`
+ * `[pdlourenco](https://…)` → `[aaaaaaaaaaa](aaaaa://…)`
+ *
+ * Which is exactly what the parsers care about — brackets, separators, date
+ * punctuation, markdown-link structure — and nothing that identifies anyone.
+ */
+function redactToShape(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `[${value.map(redactToShape).join(", ")}]`;
+  if (typeof value !== "string") return typeof value;
+  // Unicode property escapes, not \w: \w is ASCII-only, so an accented letter
+  // would survive redaction untouched — and this graph is full of them.
+  return value.replace(/\p{N}/gu, "9").replace(/\p{L}/gu, "a");
+}
+
+/** Collect per-property-key shape evidence across every block and page. */
+function summariseShapes(samples) {
+  const byKey = {};
+  for (const { source, properties } of samples) {
+    for (const [key, value] of Object.entries(properties || {})) {
+      const entry = byKey[key] || (byKey[key] = {
+        occurrences: 0,
+        types: {},
+        shapes: [],
+        seenOn: [],
+      });
+      entry.occurrences += 1;
+      const type = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+      entry.types[type] = (entry.types[type] || 0) + 1;
+      const shape = redactToShape(value);
+      if (entry.shapes.length < 3 && !entry.shapes.includes(shape)) entry.shapes.push(shape);
+      if (entry.seenOn.length < 3 && !entry.seenOn.includes(source)) entry.seenOn.push(source);
+    }
+  }
+  return sortKeys(byKey);
+}
+
+/**
+ * Check whether sandbox storage accepts a nested key. `runExport` writes
+ * `blog/<name>.md`, so if nested keys do not round-trip the export has been
+ * silently losing blog posts and the keys need flattening.
+ */
+async function probeNestedKeys(storage) {
+  const key = `${CAPTURE_PREFIX}/probe/nested.json`;
+  try {
+    await storage.setItem(key, '{"probe":true}');
+    const readBack = await storage.getItem(key);
+    return { key, wrote: true, readBack: readBack ?? null, roundTrips: Boolean(readBack) };
+  } catch (error) {
+    return { key, wrote: false, error: error.message, roundTrips: false };
+  }
+}
+
+/**
+ * Dump the graph as the plugin sees it, plus a shareable shape summary.
+ *
+ * @param {object} [options]
+ * @param {object} [options.reader] Graph reader (injectable for tests).
+ * @param {Date}   [options.now]    Capture timestamp.
+ */
+async function runCapture(options = {}) {
+  const { reader = defaultReader(), now = new Date() } = options;
+  console.log("[al-folio] Capturing graph shapes...");
+
+  try {
+    const pages = await reader.readAllPages();
+    const blocksByPage = {};
+    const samples = [];
+
+    for (const page of pages) {
+      const name = page.originalName || page.name;
+      if (!name) continue;
+      samples.push({ source: `page:${name}`, properties: page.properties });
+      const blocks = await reader.readPageBlocksTree(name);
+      blocksByPage[name] = blocks;
+      for (const block of blocks) {
+        samples.push({ source: `block:${name}`, properties: block.properties });
+        for (const child of block.children || []) {
+          samples.push({ source: `child:${name}`, properties: child.properties });
+        }
+      }
+    }
+
+    const storage = logseq.Assets.makeSandboxStorage();
+    const probe = await probeNestedKeys(storage);
+
+    const shapes = {
+      captured_at: now.toISOString(),
+      page_count: pages.length,
+      property_keys: summariseShapes(samples),
+      nested_key_support: probe,
+    };
+
+    await storage.setItem(`${CAPTURE_PREFIX}/dump.json`,
+      JSON.stringify({ captured_at: now.toISOString(), pages, blocksByPage }, null, 2));
+    await storage.setItem(`${CAPTURE_PREFIX}/shapes.json`, JSON.stringify(shapes, null, 2));
+
+    console.log(
+      `[al-folio] Wrote ${CAPTURE_PREFIX}/dump.json (PRIVATE — your whole graph, never commit or paste it)`,
+    );
+    console.log(`[al-folio] Wrote ${CAPTURE_PREFIX}/shapes.json (redacted — safe to share)`);
+    console.log("[al-folio] Shape summary:", JSON.stringify(shapes, null, 2));
+    console.log(
+      `[al-folio] Nested keys ${probe.roundTrips ? "round-trip" : "DO NOT round-trip"} — ` +
+      `blog/*.md ${probe.roundTrips ? "can" : "cannot"} be written as nested storage keys.`,
+    );
+    console.log(
+      "[al-folio] Find both files by searching your graph directory for " +
+      `"${CAPTURE_PREFIX}" — where they land answers the sandbox-path question.`,
+    );
+
+    logseq.UI.showMsg(
+      `al-folio capture complete: ${pages.length} pages, ` +
+      `${Object.keys(shapes.property_keys).length} property keys — see console`,
+      "success",
+    );
+    return shapes;
+  } catch (error) {
+    console.error("[al-folio] Capture failed:", error);
+    logseq.UI.showMsg(`al-folio capture failed: ${error.message}`, "error");
+    throw error;
+  }
+}
+
+// ============================================================================
 // Plugin Initialization
 // ============================================================================
 
@@ -1283,6 +1489,11 @@ function main() {
   logseq.App.registerCommandPalette(
     { key: "alfolio-export-dry-run", label: "Export to al-folio (dry run — writes nothing)" },
     () => runExport({ dryRun: true })
+  );
+
+  logseq.App.registerCommandPalette(
+    { key: "alfolio-capture-shapes", label: "Capture graph shapes (for plugin development)" },
+    () => runCapture()
   );
 
   // Handle toolbar click
@@ -1333,6 +1544,8 @@ if (typeof module !== "undefined" && module.exports) {
     parseCommaSeparatedRefs, parsePeopleRefs, parseMarkdownLink,
     extractBlockTitle, cleanProp, rawProp,
     getWebsiteName, entryProps, stripDisambiguationSuffix,
+    FileGraphReader, FixtureGraphReader, defaultReader,
+    redactToShape, summariseShapes, runCapture, CAPTURE_PREFIX,
     cmpString, cmpDateDesc, sortKeys, sortExport,
     ExportLint, DEFAULT_WEBSITE_NAME,
     ResolutionCache,
