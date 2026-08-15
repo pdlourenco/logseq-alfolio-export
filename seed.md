@@ -159,7 +159,9 @@ Related: the `alias::` and namespace (`/`) conventions may not survive the migra
 | `autoExportOnLoad` | `false` | Run export after `onGraphAfterIndexed` |
 | `websiteName` | `plourenco.eu` | Value matched against `website::` to select pages |
 
-The `websiteName` setting exists so the plugin generalizes to other people's graphs. Keep it that way — no hardcoded `plourenco.eu` anywhere in the logic (there are none left; don't reintroduce any).
+The `websiteName` setting exists so the plugin generalizes to other people's graphs. Keep it that way — no hardcoded `plourenco.eu` anywhere in the logic; don't reintroduce any.
+
+The earlier claim that "there are none left" was false: the `plourenco.eu/Publication Overrides` and `plourenco.eu/Blog Ideas` page names were hardcoded, so on another graph those two extractions returned nothing at all, and three `|| "plourenco.eu"` fallbacks masked an unset setting. Both are fixed — the namespace page names are derived from `websiteName`, and the setting is read once through `getWebsiteName()`, which warns rather than defaulting silently. `DEFAULT_WEBSITE_NAME` is the settings-schema default and must stay out of the logic.
 
 ---
 

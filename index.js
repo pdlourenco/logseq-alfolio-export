@@ -273,6 +273,22 @@ class ResolutionCache {
     console.log(`[al-folio] Cache built: ${Object.keys(this.pageCache).length} pages, ${Object.keys(this.aliasMap).length} aliases`);
   }
 
+  /** Whether a [[ref]] resolves to a real page, directly or through an alias */
+  hasPage(name) {
+    if (!name) return false;
+    const lower = String(name).toLowerCase();
+    return Boolean(this.pageCache[lower] || this.aliasMap[lower]);
+  }
+
+  /** Whether a person has a page carrying an affiliation we can resolve */
+  hasPerson(name) {
+    if (!name) return false;
+    const lower = String(name).toLowerCase();
+    if (this.affiliationMap[lower]) return true;
+    const resolved = String(this.resolvePageName(name)).toLowerCase();
+    return Boolean(this.affiliationMap[resolved]);
+  }
+
   /** Resolve a page name (possibly an alias) to its canonical name */
   resolvePageName(name) {
     if (!name) return name;
@@ -324,6 +340,262 @@ class ResolutionCache {
       name: (personRef.title ? personRef.title + " " : "") + resolved,
       affiliation: affLabel,
     };
+  }
+}
+
+// ============================================================================
+// Settings
+// ============================================================================
+
+// Used only as the settings-schema default — never as a fallback in logic.
+const DEFAULT_WEBSITE_NAME = "plourenco.eu";
+
+/**
+ * The site tag to filter graph pages on.
+ *
+ * Reads the setting once. If it is unset the export still runs against the
+ * schema default, but says so — silently defaulting is how a graph belonging
+ * to someone else exports nothing and looks like it worked.
+ */
+function getWebsiteName(warnings) {
+  const configured = logseq.settings?.websiteName;
+  if (configured) return configured;
+  if (warnings) {
+    warnings.push({
+      rule: "settings",
+      message: `websiteName is not set; falling back to "${DEFAULT_WEBSITE_NAME}". Set it in the plugin settings.`,
+    });
+  }
+  return DEFAULT_WEBSITE_NAME;
+}
+
+/**
+ * Blocks reach the transformers in two shapes: nested (`block.properties`,
+ * from getPageBlocksTree and the fixtures) and flattened (properties spread
+ * onto the entry, which is what runExport builds for standalone pages).
+ * Reading only the nested shape meant students, jury and projects were always
+ * empty in a real export while every unit test passed.
+ */
+function entryProps(block) {
+  if (!block) return {};
+  return block.properties || block;
+}
+
+/**
+ * Drop a trailing degree disambiguator from a name.
+ *
+ * A person with two degrees has one block per degree, and the second carries a
+ * suffix so the block titles differ (`Hugo Pereira (PhD)`). The suffix is a
+ * graph-authoring device, not part of the person's name.
+ */
+function stripDisambiguationSuffix(name) {
+  if (typeof name !== "string") return name;
+  return name
+    .replace(/\s*\((?:PhD|Ph\.?\s?D\.?|M\.?\s?Sc\.?|MSc|MS|B\.?\s?Sc\.?|BSc|Postdoc|Post-doc)\)\s*$/i, "")
+    .trim();
+}
+
+// ============================================================================
+// Deterministic ordering
+//
+// Logseq's page and block order is not stable across re-indexes, and the
+// export is committed to the site repo — unstable order makes every git diff
+// useless and, once manifest hashes land (PR 2.5), makes every hash churn.
+// Comparisons are plain codepoint order, never localeCompare, which varies by
+// machine locale and would defeat the point.
+// ============================================================================
+
+function cmpString(a, b) {
+  const x = a == null ? "" : String(a);
+  const y = b == null ? "" : String(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/** Newest first; entries with no date sort last, then by tiebreak. */
+function cmpDateDesc(a, b) {
+  const x = a == null ? "" : String(a);
+  const y = b == null ? "" : String(b);
+  if (!x && !y) return 0;
+  if (!x) return 1;
+  if (!y) return -1;
+  return x < y ? 1 : x > y ? -1 : 0;
+}
+
+function byDateThen(dateKey, ...tiebreaks) {
+  return (a, b) => {
+    const d = cmpDateDesc(a[dateKey], b[dateKey]);
+    if (d !== 0) return d;
+    for (const key of tiebreaks) {
+      const t = cmpString(a[key], b[key]);
+      if (t !== 0) return t;
+    }
+    return 0;
+  };
+}
+
+function byFields(...keys) {
+  return (a, b) => {
+    for (const key of keys) {
+      const t = cmpString(a[key], b[key]);
+      if (t !== 0) return t;
+    }
+    return 0;
+  };
+}
+
+/** Return a new object with keys in sorted order. */
+function sortKeys(obj) {
+  const out = {};
+  for (const key of Object.keys(obj).sort(cmpString)) out[key] = obj[key];
+  return out;
+}
+
+/**
+ * Impose a total order on every exported collection.
+ *
+ * Dated sections are newest-first, which is also how a CV reads; undated ones
+ * are alphabetical. Personal-page sections keep their authored order, since
+ * that is content the graph owner arranged deliberately rather than an
+ * accident of indexing.
+ */
+function sortExport(cv, personalPages, pubOverrides) {
+  cv.experience.sort(byDateThen("start", "position", "organization"));
+  cv.education.sort(byDateThen("start", "degree", "field"));
+  cv.awards.sort(byDateThen("date", "title"));
+  cv.projects.sort(byDateThen("start", "name"));
+  cv.skills.sort(byFields("group", "name"));
+  cv.research_interests.sort(byFields("group", "name"));
+  cv.languages.sort(byFields("name"));
+  cv.teaching.supervised_students.sort(byDateThen("start", "name"));
+  cv.teaching.jury.sort(byDateThen("start", "name"));
+  return {
+    cv,
+    personalPages: sortKeys(personalPages),
+    pubOverrides: sortKeys(pubOverrides),
+  };
+}
+
+// ============================================================================
+// Pre-export validation
+//
+// Reports, never fails: a graph problem should not cost you the export, but it
+// should not be invisible either.
+// ============================================================================
+
+/** Properties an entry of each type needs before it can produce a usable record. */
+const REQUIRED_PROPS = {
+  experience: ["position", "organization", "start"],
+  education: ["degree", "start"],
+  award: ["date"],
+  skill: ["group"],
+  student: ["university", "supervisor"],
+  project: ["start"],
+};
+
+const DATE_PROPS = ["start", "end", "date"];
+const VALID_DATE = /^\d{4}(?:\/\d{1,2}(?:\/\d{1,2})?)?$/;
+
+class ExportLint {
+  constructor(cache) {
+    this.cache = cache;
+    this.warnings = [];
+    this.iconKeys = new Set();
+  }
+
+  warn(rule, message) {
+    this.warnings.push({ rule, message });
+  }
+
+  /** Every [[ref]] in a value must resolve to a real page. */
+  checkRefs(label, value) {
+    if (typeof value !== "string") return;
+    for (const ref of extractRefs(value)) {
+      if (ref.includes("(")) {
+        this.warn(
+          "ref-parentheses",
+          `${label}: [[${ref}]] contains parentheses — usually an affiliation baked into the link, which cannot resolve to a page.`,
+        );
+      }
+      if (!this.cache.hasPage(ref)) {
+        this.warn("unresolved-ref", `${label}: [[${ref}]] does not resolve to any page.`);
+      }
+    }
+  }
+
+  checkDates(label, props) {
+    for (const key of DATE_PROPS) {
+      const raw = rawProp(props, key);
+      if (!raw) continue;
+      const stripped = stripBrackets(String(raw)).trim();
+      if (!VALID_DATE.test(stripped)) {
+        this.warn("bad-date", `${label}: ${key}:: "${stripped}" is not YYYY, YYYY/MM or YYYY/MM/DD.`);
+      }
+    }
+  }
+
+  checkRequired(label, type, props) {
+    const required = REQUIRED_PROPS[type];
+    if (!required) return;
+    for (const key of required) {
+      if (!rawProp(props, key)) {
+        this.warn("missing-property", `${label}: type "${type}" needs ${key}::, which is missing.`);
+      }
+    }
+  }
+
+  checkSupervisors(label, props) {
+    const raw = rawProp(props, "supervisor");
+    if (!raw) return;
+    for (const person of parsePeopleRefs(String(raw))) {
+      if (!person.name) continue;
+      if (!this.cache.hasPerson(person.name)) {
+        this.warn(
+          "unknown-supervisor",
+          `${label}: supervisor "${person.name}" has no person page, so their affiliation cannot be resolved.`,
+        );
+      }
+    }
+  }
+
+  collectIcons(props) {
+    const icon = cleanProp(props, "icon");
+    if (icon) this.iconKeys.add(icon);
+  }
+
+  /** Lint one entry, whichever shape it arrived in. */
+  checkEntry(entry) {
+    const props = entryProps(entry);
+    const type = cleanProp(props, "type");
+    const label = stripDisambiguationSuffix(extractBlockTitle(entry._blockContent || entry.content)) ||
+      cleanProp(props, "position") || cleanProp(props, "degree") || type || "entry";
+
+    this.collectIcons(props);
+    this.checkDates(label, props);
+    if (type) this.checkRequired(label, type, props);
+    if (type === "student") this.checkSupervisors(label, props);
+
+    for (const [key, value] of Object.entries(props)) {
+      if (key === "_blockContent" || key === "properties") continue;
+      this.checkRefs(`${label}.${key}`, typeof value === "string" ? value : null);
+    }
+  }
+
+  checkAll(entryGroups) {
+    for (const entries of entryGroups) {
+      for (const entry of entries || []) this.checkEntry(entry);
+    }
+    if (this.iconKeys.size > 0) {
+      this.warn(
+        "icons-used",
+        `icon keys referenced (the site must map these in icon_map.yml): ${[...this.iconKeys].sort(cmpString).join(", ")}`,
+      );
+    }
+    return this.warnings;
+  }
+
+  /** Warnings that indicate a problem, as opposed to the icon inventory. */
+  get problems() {
+    return this.warnings.filter((w) => w.rule !== "icons-used");
   }
 }
 
@@ -489,7 +761,7 @@ function transformStudents(blocks, cache) {
   const jury = [];
 
   for (const b of blocks) {
-    const props = b.properties || {};
+    const props = entryProps(b);
     if (cleanProp(props, "type") !== "student") continue;
 
     const uniRaw = rawProp(props, "university") || "";
@@ -501,7 +773,7 @@ function transformStudents(blocks, cache) {
       cache.resolveSupervisor(p, universities)
     );
 
-    const name = extractBlockTitle(b._blockContent || b.content);
+    const name = stripDisambiguationSuffix(extractBlockTitle(b._blockContent || b.content));
 
     const entry = {
       name: name,
@@ -538,10 +810,10 @@ function transformStudents(blocks, cache) {
 
 function transformProjects(blocks, cache) {
   return blocks.filter((b) => {
-    const props = b.properties || {};
+    const props = entryProps(b);
     return cleanProp(props, "type") === "project";
   }).map((b) => {
-    const props = b.properties || {};
+    const props = entryProps(b);
     const inst = cleanProp(props, "institution");
     const name = extractBlockTitle(b._blockContent || b.content);
 
@@ -673,14 +945,25 @@ function transformPublicationOverrides(entries, cache) {
 // Main Export Pipeline
 // ============================================================================
 
-async function runExport() {
+/**
+ * Run the export.
+ *
+ * @param {object}  [options]
+ * @param {boolean} [options.dryRun] Run everything, log the output, write nothing.
+ * @param {Date}    [options.now]    Export timestamp. Injectable so tests can pin
+ *                                   the one value in the output that is not a
+ *                                   function of the graph.
+ */
+async function runExport(options = {}) {
+  const { dryRun = false, now = new Date() } = options;
   const startTime = Date.now();
-  console.log("[al-folio] Starting export...");
+  console.log(`[al-folio] Starting export${dryRun ? " (dry run)" : ""}...`);
 
   try {
     // 1. Build resolution caches
     const cache = new ResolutionCache();
     await cache.build();
+    const lint = new ExportLint(cache);
 
     // 2. Extract CV namespace pages
     const cvPages = {
@@ -693,12 +976,9 @@ async function runExport() {
       profile: await extractNamespaceEntries("CV/Profile", cache),
     };
 
-    // 3. Find all website-tagged pages (students, projects)
-    const websiteBlocks = await findWebsitePages(cache);
-
-    // Also scan standalone pages by walking all pages for website property
+    // 3. Scan standalone pages for the website:: tag (students, projects)
     const allPages = await logseq.Editor.getAllPages();
-    const siteName = logseq.settings?.websiteName || "plourenco.eu";
+    const siteName = getWebsiteName(lint.warnings);
     const standaloneEntries = [];
     for (const page of allPages || []) {
       const props = page.properties || {};
@@ -729,9 +1009,9 @@ async function runExport() {
       }
     }
 
-    // 4. Extract plourenco.eu namespace
-    const pubOverrides = await extractNamespaceEntries("plourenco.eu/Publication Overrides", cache);
-    const blogIdeas = await extractNamespaceEntries("plourenco.eu/Blog Ideas", cache);
+    // 4. Extract the site namespace (page names follow the configured site)
+    const pubOverrides = await extractNamespaceEntries(`${siteName}/Publication Overrides`, cache);
+    const blogIdeas = await extractNamespaceEntries(`${siteName}/Blog Ideas`, cache);
 
     // 5. Extract Personal namespace (only website-tagged)
     const personalPages = {};
@@ -769,18 +1049,26 @@ async function runExport() {
     const profile = transformProfile(cvPages.profile, cache);
     const pubOverridesData = transformPublicationOverrides(pubOverrides, cache);
 
+    // 6b. Lint the source entries, and impose a total order on the output.
+    lint.checkAll([
+      cvPages.experience, cvPages.education, cvPages.awards, cvPages.skills,
+      cvPages.languages, cvPages.researchInterests, cvPages.profile,
+      standaloneEntries, pubOverrides, blogIdeas,
+    ]);
+    const sorted = sortExport(cv, personalPages, pubOverridesData);
+
     // 7. Generate YAML files
     const files = {};
-    files["cv.yml"] = toYAML(cv);
+    files["cv.yml"] = toYAML(sorted.cv);
     files["profile.yml"] = toYAML(profile);
-    files["personal.yml"] = toYAML(personalPages);
-    files["publication_overrides.yml"] = toYAML(pubOverridesData);
+    files["personal.yml"] = toYAML(sorted.personalPages);
+    files["publication_overrides.yml"] = toYAML(sorted.pubOverrides);
 
     // Manifest for the sync script
     files["manifest.json"] = JSON.stringify({
-      exported_at: new Date().toISOString(),
+      exported_at: now.toISOString(),
       plugin_version: "0.1.0",
-      website: logseq.settings?.websiteName || "plourenco.eu",
+      website: siteName,
       files: Object.keys(files),
       counts: {
         experience: cv.experience.length,
@@ -792,8 +1080,8 @@ async function runExport() {
         projects: cv.projects.length,
         supervised_students: cv.teaching.supervised_students.length,
         jury: cv.teaching.jury.length,
-        personal_pages: Object.keys(personalPages).length,
-        publication_overrides: Object.keys(pubOverridesData).length,
+        personal_pages: Object.keys(sorted.personalPages).length,
+        publication_overrides: Object.keys(sorted.pubOverrides).length,
       },
     }, null, 2);
 
@@ -818,20 +1106,44 @@ async function runExport() {
       files[filename] = frontmatter;
     }
 
-    // 8. Write files to sandbox storage
-    const storage = logseq.Assets.makeSandboxStorage();
+    // 8. Report what the lint found. Warnings never fail the export.
+    for (const warning of lint.warnings) {
+      console.warn(`[al-folio] ${warning.rule}: ${warning.message}`);
+    }
 
-    for (const [filename, content] of Object.entries(files)) {
-      const key = `${EXPORT_PREFIX}/${filename}`;
-      await storage.setItem(key, content);
-      console.log(`[al-folio] Wrote ${key}`);
+    // 9. Write files to sandbox storage, in a stable order.
+    const filenames = Object.keys(files).sort(cmpString);
+    if (dryRun) {
+      for (const filename of filenames) {
+        console.log(`[al-folio] (dry run) ${filename}:\n${files[filename]}`);
+      }
+    } else {
+      const storage = logseq.Assets.makeSandboxStorage();
+      for (const filename of filenames) {
+        const key = `${EXPORT_PREFIX}/${filename}`;
+        await storage.setItem(key, files[filename]);
+        console.log(`[al-folio] Wrote ${key}`);
+      }
     }
 
     const elapsed = Date.now() - startTime;
-    const fileCount = Object.keys(files).length;
-    const msg = `al-folio export complete: ${fileCount} files in ${elapsed}ms`;
+    const entryCount = Object.values(cv).reduce(
+      (total, section) => total + (Array.isArray(section) ? section.length : 0),
+      cv.teaching.supervised_students.length + cv.teaching.jury.length,
+    );
+    const problems = lint.problems.length;
+    const msg = [
+      dryRun ? "al-folio dry run complete:" : "al-folio export complete:",
+      `${entryCount} entries, ${filenames.length} files`,
+      problems > 0 ? `, ${problems} warning${problems === 1 ? "" : "s"} — see console` : "",
+      ` (${elapsed}ms)`,
+    ].join("");
     console.log(`[al-folio] ${msg}`);
+    // Stays a success toast even with warnings: the export did complete, and
+    // the count plus "see console" is the signal. Only a thrown error is a
+    // failure toast.
     logseq.UI.showMsg(msg, "success");
+    return { files, warnings: lint.warnings };
 
   } catch (error) {
     console.error("[al-folio] Export failed:", error);
@@ -860,10 +1172,15 @@ function main() {
     `,
   });
 
-  // Register command
+  // Register commands
   logseq.App.registerCommandPalette(
     { key: "alfolio-export", label: "Export to al-folio" },
-    runExport
+    () => runExport()
+  );
+
+  logseq.App.registerCommandPalette(
+    { key: "alfolio-export-dry-run", label: "Export to al-folio (dry run — writes nothing)" },
+    () => runExport({ dryRun: true })
   );
 
   // Handle toolbar click
@@ -897,7 +1214,7 @@ function main() {
       type: "string",
       title: "Website page name",
       description: "The Logseq page name for your website (used to filter website:: property)",
-      default: "plourenco.eu",
+      default: DEFAULT_WEBSITE_NAME,
     },
   ]);
 }
@@ -913,6 +1230,9 @@ if (typeof module !== "undefined" && module.exports) {
     stripBrackets, extractRefs, convertDate,
     parseCommaSeparatedRefs, parsePeopleRefs, parseMarkdownLink,
     extractBlockTitle, cleanProp, rawProp,
+    getWebsiteName, entryProps, stripDisambiguationSuffix,
+    cmpString, cmpDateDesc, sortKeys, sortExport,
+    ExportLint, DEFAULT_WEBSITE_NAME,
     ResolutionCache,
     extractNamespaceEntries, findWebsitePages,
     transformExperience, transformEducation, transformAwards,
