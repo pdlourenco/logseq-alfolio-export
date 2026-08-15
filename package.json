@@ -16,6 +16,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "fast-check": "^4.9.0",
+    "js-yaml": "^5.3.0",
     "vitest": "^2.0.0"
   }
 }

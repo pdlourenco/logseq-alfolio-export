@@ -132,8 +132,8 @@ A command that runs the whole pipeline and logs the output without writing files
 Logseq is migrating from file-based graphs (markdown files + `:block/properties` maps) to a **DB-based** version where properties are first-class entities and the `Namespace/Page` convention is replaced by tags/properties. This breaks essentially every assumption in `index.js`.
 
 Actions:
-1. Set `unsupportedGraphType` in `package.json` to whichever type is genuinely unsupported, so Logseq refuses to load rather than silently misbehaving. Right now this field is absent — add it.
-2. Detect graph type at runtime (`logseq.App.getCurrentGraph()` / `getInfo()`) and show a clear message if it's not the supported type.
+1. Set `unsupportedGraphType` in `package.json` to whichever type is genuinely unsupported, so Logseq refuses to load rather than silently misbehaving. Right now this field is absent — add it. **Verified:** it is a real optional field, values `file | db` ([Logseq Plugin Setup Guide](https://gist.github.com/xyhp915/bb9f67f5b430ac0da2629d586a3e4d69)); this plugin needs `db`.
+2. Detect graph type at runtime and show a clear message if it's not the supported type. **Verified:** `logseq.App.checkCurrentIsDbGraph(): Promise<Boolean>` is the API for this ([IAppProxy](https://logseq.github.io/plugins/interfaces/IAppProxy.html)) — but `index.html` pins `@logseq/libs@0.0.17` from CDN, which predates it, so this needs the pin bumped first.
 3. Isolate all graph-reading behind a small adapter layer (`readPages()`, `readBlocks()`, `readProperties()`) so a DB-version implementation can be swapped in without touching the transformers. **Do this refactor before adding features** — it is much cheaper now than later.
 4. Keep the intermediate output format identical across graph types. That is the whole point of the contract.
 
@@ -147,7 +147,8 @@ Related: the `alias::` and namespace (`/`) conventions may not survive the migra
 - **`sync.sh` does not commit or push.** Consider an option that stages `_incoming/` in the site repo and opens a diff, so the human reviews before pushing.
 - **One-way sync only.** Edits made directly to the site's YAML are silently overwritten on next export. Document this prominently; consider a checksum warning.
 - **Assets.** Album art, DIY photos, and icons currently must be placed in the Jekyll repo by hand. Logseq stores its own assets under `assets/`. Consider exporting referenced images too, or explicitly documenting that assets are the site repo's responsibility (this is the simpler choice — prefer it unless there's a strong reason).
-- **Tests.** No test harness exists. A fixture-based approach works: capture real `getAllPages()` / `getPageBlocksTree()` output as JSON once, then run the transformers against it in plain Node with no Logseq running.
+- **Tests.** A Vitest harness exists and runs in plain Node with no Logseq running: unit tests for the parsers and serializer, integration tests for the extractors, transformers and `runExport()`, property-based tests (`fast-check`, with `js-yaml` as a YAML oracle) for the round-trip law, and a shell test driving `sync.sh`. `fast-check` and `js-yaml` are devDependencies — the plugin runtime stays zero-dependency, and neither may be imported by `index.js`. CI runs `npm test` on every push and PR.
+  The original point still stands where it matters: the committed fixtures are **hand-written guesses** at Logseq's API shapes, so the suite proves self-consistency, not conformance with reality. Capturing real `getAllPages()` / `getPageBlocksTree()` output and regenerating the fixtures from it is Priority 1 work (see ROADMAP.md, PR 3).
 
 ---
 

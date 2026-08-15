@@ -9,56 +9,102 @@ const EXPORT_PREFIX = "_logseq_export"; // subfolder in sandbox storage
 // YAML Serializer (minimal, no dependencies)
 // ============================================================================
 
+// Words a YAML parser reads as something other than a string. The consumer is
+// Python/PyYAML, which is YAML 1.1 — so `yes`, `no`, `on`, `off` are booleans
+// there even though a YAML 1.2 parser keeps them as strings. (The bare `y`/`n`
+// forms are listed by YAML 1.1 but PyYAML 6 does not implement them: it returns
+// the string. They are quoted anyway, since another parser may.) Quoting costs
+// nothing and stops a value changing type in transit.
+const YAML_RESERVED_WORDS =
+  /^(?:~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|y|Y|n|N)$/;
+
+// A plain scalar may not open with an indicator character: the parser reads it
+// as structure. `- x` starts a list, `&x` an anchor, `!x` a tag, and so on.
+const YAML_LEADING_INDICATOR = /^[-+?:,[\]{}#&*!|>'"%@`.]/;
+
+/** Whether a string has to be quoted to survive a round trip through a parser. */
+function needsQuoting(str) {
+  return (
+    str === "" ||
+    str !== str.trim() ||          // leading/trailing space is dropped unquoted
+    str.includes("\n") ||
+    str.includes(":") ||
+    str.includes("#") ||
+    str.includes("'") ||
+    str.includes('"') ||
+    YAML_LEADING_INDICATOR.test(str) ||
+    YAML_RESERVED_WORDS.test(str) ||
+    /^\d/.test(str)                // would be read as a number or a date
+  );
+}
+
+/**
+ * Serialize a mapping.
+ *
+ * `dropNulls` is the one contractual asymmetry in this serializer, and it is
+ * deliberate: null-valued keys vanish from a mapping but are written out as
+ * explicit `null` inside a list item. Contract v1 accommodates both spellings
+ * and the site's transform treats them identically, so changing either is a
+ * breaking shape change that needs a schema_version bump. See ROADMAP.md.
+ */
+function toYAMLMapping(obj, indent, dropNulls) {
+  const pad = "  ".repeat(indent);
+  const entries = Object.entries(obj);
+  if (entries.length === 0) return pad + "{}";
+
+  const lines = [];
+  for (const [rawKey, v] of entries) {
+    // Keys need the same quoting as values: personal.yml is keyed by page slug
+    // and publication_overrides.yml by BibTeX cite-key, neither of which is
+    // guaranteed to be a safe plain scalar.
+    const k = needsQuoting(rawKey) ? JSON.stringify(rawKey) : rawKey;
+    if (v === null || v === undefined) {
+      if (!dropNulls) lines.push(pad + k + ": null");
+      continue;
+    }
+    if (Array.isArray(v)) {
+      lines.push(v.length === 0 ? pad + k + ": []" : pad + k + ":\n" + toYAML(v, indent + 1));
+    } else if (typeof v === "object") {
+      lines.push(pad + k + ":\n" + toYAML(v, indent + 1));
+    } else {
+      lines.push(pad + k + ": " + toYAML(v).trim());
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Turn an already-indented block into a list item by grafting `- ` onto its
+ * first line. The block is rendered one level deeper, which is exactly the
+ * width of the `- ` marker, so the remaining lines already sit correctly and
+ * nested structure survives. Trimming the block instead — as this used to —
+ * collapsed nested collections into unparseable output.
+ */
+function toYAMLListItem(item, indent) {
+  const pad = "  ".repeat(indent);
+  const block = (typeof item === "object" && item !== null && !Array.isArray(item))
+    ? toYAMLMapping(item, indent + 1, false)
+    : toYAML(item, indent + 1);
+
+  const lines = block.split("\n");
+  lines[0] = pad + "- " + lines[0].slice(pad.length + 2);
+  return lines.join("\n");
+}
+
 function toYAML(obj, indent = 0) {
   const pad = "  ".repeat(indent);
   if (obj === null || obj === undefined) return pad + "null";
   if (typeof obj === "boolean") return pad + (obj ? "true" : "false");
   if (typeof obj === "number") return pad + String(obj);
   if (typeof obj === "string") {
-    if (obj.includes("\n") || obj.includes(":") || obj.includes("#") ||
-        obj.includes("'") || obj.includes('"') || obj.startsWith("@") ||
-        obj.startsWith("*") || obj.startsWith("{") || obj.startsWith("[") ||
-        obj === "" || obj === "true" || obj === "false" || obj === "null" ||
-        /^\d/.test(obj)) {
-      return pad + JSON.stringify(obj);
-    }
-    return pad + obj;
+    return pad + (needsQuoting(obj) ? JSON.stringify(obj) : obj);
   }
   if (Array.isArray(obj)) {
     if (obj.length === 0) return pad + "[]";
-    return obj.map((item) => {
-      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-        const entries = Object.entries(item);
-        if (entries.length === 0) return pad + "- {}";
-        const [firstKey, firstVal] = entries[0];
-        let result = pad + "- " + firstKey + ": " + toYAML(firstVal).trim();
-        for (let i = 1; i < entries.length; i++) {
-          const [k, v] = entries[i];
-          if (typeof v === "object" && v !== null) {
-            result += "\n" + pad + "  " + k + ":\n" + toYAML(v, indent + 2);
-          } else {
-            result += "\n" + pad + "  " + k + ": " + toYAML(v).trim();
-          }
-        }
-        return result;
-      }
-      return pad + "- " + toYAML(item).trim();
-    }).join("\n");
+    return obj.map((item) => toYAMLListItem(item, indent)).join("\n");
   }
   if (typeof obj === "object") {
-    const entries = Object.entries(obj);
-    if (entries.length === 0) return pad + "{}";
-    return entries.map(([k, v]) => {
-      if (v === null || v === undefined) return null;
-      if (typeof v === "object" && !Array.isArray(v)) {
-        return pad + k + ":\n" + toYAML(v, indent + 1);
-      }
-      if (Array.isArray(v)) {
-        if (v.length === 0) return pad + k + ": []";
-        return pad + k + ":\n" + toYAML(v, indent + 1);
-      }
-      return pad + k + ": " + toYAML(v).trim();
-    }).filter(Boolean).join("\n");
+    return toYAMLMapping(obj, indent, true);
   }
   return pad + String(obj);
 }
@@ -119,7 +165,10 @@ function parseMarkdownLink(val) {
  *  Logseq block content includes all lines, including `key:: val` properties.
  *  We want just the first non-property, non-empty line. */
 function extractBlockTitle(content) {
-  if (!content) return "";
+  // Not just falsy: Logseq's block content shape is an untested assumption
+  // (seed.md P1), and a non-string here used to throw and take the whole
+  // export down with it.
+  if (typeof content !== "string" || !content) return "";
   const lines = content.split("\n");
   for (const line of lines) {
     const trimmed = line.replace(/^-\s*/, "").trim();
