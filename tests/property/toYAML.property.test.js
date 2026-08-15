@@ -102,11 +102,16 @@ describe('toYAML round-trip law', () => {
   });
 
   // The one carve-out: a mapping whose keys all drop emits nothing at all, and
-  // an empty document is not parseable. That is pre-existing behaviour and it
-  // is reachable — a missing CV/Profile page makes every profile field null, so
-  // profile.yml comes out empty rather than as `{}`. Changing it is a shape
-  // decision (empty file vs. empty mapping), so it is flagged for PR 2.5 rather
-  // than quietly altered here. Everything that emits anything must parse.
+  // an empty document is not parseable. This is pre-existing behaviour and, as
+  // of today, LATENT — no output file can reach it. transformProfile returns
+  // `{}` rather than a mapping of nulls, cv.yml's top-level values are arrays
+  // (which emit `[]` rather than dropping), and personal.yml and
+  // publication_overrides.yml emit `{}` when empty. It would take a future
+  // transformer that assigns a null-valued key to surface it.
+  //
+  // Changing it is a shape decision (empty file vs. empty mapping) with
+  // opposite failure modes, so it is deferred to PR 2.5 rather than altered
+  // here. Everything that emits anything must parse.
   test('emitted YAML always parses, unless every key dropped', () => {
     fc.assert(
       fc.property(jsonish, (value) => {

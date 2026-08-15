@@ -10,10 +10,11 @@ const EXPORT_PREFIX = "_logseq_export"; // subfolder in sandbox storage
 // ============================================================================
 
 // Words a YAML parser reads as something other than a string. The consumer is
-// Python/PyYAML, which is YAML 1.1 — so `yes`, `no`, `on`, `off` and the bare
-// `y`/`n` forms are booleans there even though a YAML 1.2 parser keeps them as
-// strings. Quoting them costs nothing and stops a value changing type in
-// transit.
+// Python/PyYAML, which is YAML 1.1 — so `yes`, `no`, `on`, `off` are booleans
+// there even though a YAML 1.2 parser keeps them as strings. (The bare `y`/`n`
+// forms are listed by YAML 1.1 but PyYAML 6 does not implement them: it returns
+// the string. They are quoted anyway, since another parser may.) Quoting costs
+// nothing and stops a value changing type in transit.
 const YAML_RESERVED_WORDS =
   /^(?:~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|y|Y|n|N)$/;
 
