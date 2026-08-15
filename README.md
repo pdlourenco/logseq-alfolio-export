@@ -49,6 +49,28 @@ for the normative shape of each file.
 - Click the **↓** toolbar button, or
 - Open Command Palette (`Ctrl+Shift+P`) → "Export to al-folio"
 
+### Dry run
+
+Command Palette → **"Export to al-folio (dry run — writes nothing)"** runs the
+whole pipeline and logs every file it would write, touching nothing on disk.
+Useful for checking what a graph change does to the output before committing to it.
+
+### Validation warnings
+
+Every export lints the graph first and reports, without ever failing the export:
+
+| Warning | Meaning |
+|---|---|
+| `unresolved-ref` | A `[[ref]]` matches no page |
+| `ref-parentheses` | A ref like `[[Name (AFFIL)]]` — usually an affiliation baked into a link, which cannot resolve |
+| `bad-date` | A date that is not `YYYY`, `YYYY/MM` or `YYYY/MM/DD` |
+| `missing-property` | An entry lacks a property its `type::` needs |
+| `unknown-supervisor` | A supervisor has no person page, so affiliation cannot be resolved |
+| `icons-used` | Inventory of icon keys the site must map in `icon_map.yml` |
+
+The toast summarises (`32 entries, 6 files, 4 warnings — see console`); the detail
+goes to the console.
+
 ### Auto-export on graph load
 
 1. Go to plugin settings (Plugin Manager → al-folio Export → ⚙)
