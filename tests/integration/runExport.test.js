@@ -1,4 +1,5 @@
 const { runExport } = require('../../index.js');
+const pkg = require('../../package.json');
 const { PAGES_FIXTURE } = require('../__fixtures__/pages.fixture.js');
 const {
   EXPERIENCE_BLOCKS,
@@ -81,7 +82,10 @@ describe('runExport', () => {
     const manifestCall = storage.setItem.mock.calls.find((c) => c[0].endsWith('manifest.json'));
     expect(manifestCall).toBeDefined();
     const manifest = JSON.parse(manifestCall[1]);
-    expect(manifest.plugin_version).toBe('0.1.0');
+    // Compared against package.json, not a literal: the manifest reads its
+    // version from there, so a literal here would just re-create the coupling
+    // that reading it at runtime removed (#1 gap 5).
+    expect(manifest.plugin_version).toBe(pkg.version);
     expect(manifest.website).toBe('plourenco.eu');
     expect(manifest.counts).toBeDefined();
     expect(typeof manifest.counts.experience).toBe('number');

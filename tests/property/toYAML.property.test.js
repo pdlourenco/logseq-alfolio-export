@@ -29,13 +29,13 @@ const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArr
  *   - in a mapping, a null-valued key is dropped entirely;
  *   - in an object that is directly a list item, it is written as `k: null`.
  *
- * A mapping whose keys all drop emits no lines at all, so its parent renders
- * `key:` with nothing under it, which parses as null. That is pre-existing
- * behaviour, modelled here rather than changed.
+ * A mapping whose keys all drop emits `{}` at the root, so a file is always a
+ * well-formed document (D65); nested, it emits nothing and the parent renders
+ * `key:` with nothing under it, which parses as null.
  */
-function expectedParse(value, isListItem = false) {
+function expectedParse(value, isListItem = false, isRoot = true) {
   if (Array.isArray(value)) {
-    return value.length === 0 ? [] : value.map((item) => expectedParse(item, true));
+    return value.length === 0 ? [] : value.map((item) => expectedParse(item, true, false));
   }
   if (isPlainObject(value)) {
     const entries = Object.entries(value);
@@ -50,11 +50,14 @@ function expectedParse(value, isListItem = false) {
         emitted++;
         continue;
       }
-      out[k] = expectedParse(v, false);
+      out[k] = expectedParse(v, false, false);
       emitted++;
     }
-    // Every key dropped → the parent emits a bare `key:` → parses as null.
-    return emitted === 0 ? null : out;
+    if (emitted > 0) return out;
+    // Every key dropped. At the root that is written as `{}` so the file stays
+    // a well-formed document (D65); nested, the parent emits a bare `key:`
+    // with nothing under it, which parses as null.
+    return isRoot ? {} : null;
   }
   return value;
 }
@@ -89,34 +92,21 @@ describe('toYAML round-trip law', () => {
     fc.assert(
       fc.property(jsonish, (value) => {
         const emitted = toYAML(value);
-        const expected = expectedParse(value);
-        if (emitted === '') {
-          // An all-dropped mapping emits nothing — see the carve-out below.
-          expect(expected).toBeNull();
-          return;
-        }
-        expect(yaml.load(emitted) ?? null).toEqual(expected ?? null);
+        expect(yaml.load(emitted) ?? null).toEqual(expectedParse(value) ?? null);
       }),
       { numRuns: 500 },
     );
   });
 
-  // The one carve-out: a mapping whose keys all drop emits nothing at all, and
-  // an empty document is not parseable. This is pre-existing behaviour and, as
-  // of today, LATENT — no output file can reach it. transformProfile returns
-  // `{}` rather than a mapping of nulls, cv.yml's top-level values are arrays
-  // (which emit `[]` rather than dropping), and personal.yml and
-  // publication_overrides.yml emit `{}` when empty. It would take a future
-  // transformer that assigns a null-valued key to surface it.
-  //
-  // Changing it is a shape decision (empty file vs. empty mapping) with
-  // opposite failure modes, so it is deferred to PR 2.5 rather than altered
-  // here. Everything that emits anything must parse.
-  test('emitted YAML always parses, unless every key dropped', () => {
+  // No carve-out any more. A root mapping whose keys all drop is written as
+  // `{}` (D65), so every value this serializer produces at the root is a
+  // well-formed document — previously an all-dropped mapping emitted nothing,
+  // and an empty file does not parse.
+  test('emitted YAML always parses', () => {
     fc.assert(
       fc.property(jsonish, (value) => {
         const emitted = toYAML(value);
-        fc.pre(emitted !== '');
+        expect(emitted).not.toBe('');
         expect(() => yaml.load(emitted)).not.toThrow();
       }),
       { numRuns: 500 },
@@ -126,8 +116,7 @@ describe('toYAML round-trip law', () => {
   test('top-level mappings round-trip with arbitrary keys', () => {
     fc.assert(
       fc.property(fc.dictionary(key, scalar, { maxKeys: 8 }), (obj) => {
-        const emitted = toYAML(obj);
-        const parsed = emitted === '' ? {} : (yaml.load(emitted) ?? {});
+        const parsed = yaml.load(toYAML(obj)) ?? {};
         expect(parsed).toEqual(expectedParse(obj) ?? {});
       }),
       { numRuns: 500 },
@@ -153,6 +142,9 @@ describe('toYAML round-trip law', () => {
     fc.assert(
       fc.property(jsonish, fc.integer({ min: 0, max: 4 }), (value, indent) => {
         const emitted = toYAML(value, indent);
+        // The `{}` guarantee is root-only by design, and rendering at a deeper
+        // indent is not the root — an all-dropped mapping still emits nothing
+        // there, which is the nested spelling the consumer reads as null.
         fc.pre(emitted !== '');
         // Rendering deeper only shifts the block; it must still parse alone.
         const dedented = emitted

@@ -28,10 +28,20 @@ function makeGraph(root, { withBlog = true, withManifest = true, manifestContent
   fs.writeFileSync(path.join(exportDir, 'publication_overrides.yml'), 'key2024:\n  selected: true\n');
 
   if (withManifest) {
+    // sync.sh copies exactly what the manifest lists, so the fixture manifest
+    // has to describe the staged files the way a real contract-v1 export does.
+    const listed = [
+      'cv.yml', 'profile.yml', 'personal.yml', 'publication_overrides.yml', 'manifest.json',
+      ...(withBlog ? ['blog/2026-01-02-a-post.md'] : []),
+    ];
     fs.writeFileSync(
       path.join(exportDir, 'manifest.json'),
-      manifestContent
-        ?? JSON.stringify({ exported_at: '2026-01-01T00:00:00.000Z', counts: { experience: 1 } }, null, 2),
+      manifestContent ?? JSON.stringify({
+        schema_version: 1,
+        exported_at: '2026-01-01T00:00:00.000Z',
+        files: listed,
+        counts: { experience: 1 },
+      }, null, 2),
     );
   }
   if (withBlog) {
@@ -166,6 +176,148 @@ describe('sync.sh', () => {
     });
   });
 
+  // _incoming/ is not exclusively the plugin's: the site keeps README.md there
+  // and papers.src.bib is staged by hand from Zotero. So stale files are pruned
+  // by the *previous manifest's* file list — exactly what the last export
+  // owned — and never by clearing the directory.
+  describe('pruning stale files', () => {
+    /** Seed _incoming/ as if a previous export had staged `files`. */
+    function seedIncoming(site, files, { manifest = null } = {}) {
+      const incoming = path.join(site, '_incoming');
+      for (const rel of files) {
+        const abs = path.join(incoming, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, `stale ${rel}\n`);
+      }
+      fs.mkdirSync(incoming, { recursive: true });
+      fs.writeFileSync(
+        path.join(incoming, 'manifest.json'),
+        manifest ?? JSON.stringify({
+          schema_version: 1,
+          exported_at: '2025-01-01T00:00:00.000Z',
+          files: [...files, 'manifest.json'],
+        }),
+      );
+      return incoming;
+    }
+
+    test('removes a file the previous export owned and this one does not', () => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+      const incoming = seedIncoming(site, ['blog/2020-01-01-dropped.md', 'cv.yml']);
+
+      runSync(['--graph', graph, '--site', site]);
+
+      expect(fs.existsSync(path.join(incoming, 'blog/2020-01-01-dropped.md'))).toBe(false);
+      // Still listed by the new export, so it is overwritten rather than removed.
+      expect(fs.readFileSync(path.join(incoming, 'cv.yml'), 'utf8')).toContain('position: Engineer');
+    });
+
+    test('never touches a file the plugin does not own', () => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+      const incoming = seedIncoming(site, ['blog/2020-01-01-dropped.md']);
+      // Neither is plugin output: README.md is the site's, papers.src.bib is
+      // staged by hand from Zotero on a different cadence.
+      fs.writeFileSync(path.join(incoming, 'README.md'), '# staging area\n');
+      fs.writeFileSync(path.join(incoming, 'papers.src.bib'), '@article{key2024}\n');
+
+      runSync(['--graph', graph, '--site', site]);
+
+      expect(fs.readFileSync(path.join(incoming, 'README.md'), 'utf8')).toBe('# staging area\n');
+      expect(fs.readFileSync(path.join(incoming, 'papers.src.bib'), 'utf8')).toBe('@article{key2024}\n');
+    });
+
+    test.each([
+      ['unparseable JSON', 'NOT JSON{'],
+      ['no files list', JSON.stringify({ schema_version: 1 })],
+      ['an unknown schema_version', JSON.stringify({ schema_version: 99, files: ['blog/x.md'] })],
+    ])('prunes nothing when the previous manifest has %s, and says so', (_label, manifest) => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+      const incoming = seedIncoming(site, ['blog/2020-01-01-dropped.md'], { manifest });
+
+      const stderr = [];
+      runSync(['--graph', graph, '--site', site], {}, stderr);
+
+      expect(fs.existsSync(path.join(incoming, 'blog/2020-01-01-dropped.md'))).toBe(true);
+      expect(stderr.join('')).toMatch(/pruning nothing|nothing to prune/);
+    });
+
+    test('prunes nothing on a first sync, without complaining', () => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+
+      const stderr = [];
+      runSync(['--graph', graph, '--site', site], {}, stderr);
+
+      expect(stderr.join('')).toMatch(/nothing to prune/);
+      expect(fs.existsSync(path.join(site, '_incoming', 'cv.yml'))).toBe(true);
+    });
+
+    test('an already-absent stale entry is not an error', () => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+      const incoming = seedIncoming(site, []);
+      fs.writeFileSync(path.join(incoming, 'manifest.json'), JSON.stringify({
+        schema_version: 1,
+        files: ['blog/never-existed.md', 'manifest.json'],
+      }));
+
+      expect(() => runSync(['--graph', graph, '--site', site])).not.toThrow();
+    });
+
+    test('ignores a path that tries to escape _incoming/', () => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+      const incoming = seedIncoming(site, [], {
+        manifest: JSON.stringify({
+          schema_version: 1,
+          files: ['../../_data/cv.yml', 'manifest.json'],
+        }),
+      });
+      const sentinel = path.join(site, '_data/cv.yml');
+
+      const stderr = [];
+      runSync(['--graph', graph, '--site', site], {}, stderr);
+
+      expect(fs.readFileSync(sentinel, 'utf8')).toBe(SENTINELS['_data/cv.yml']);
+      expect(stderr.join('')).toMatch(/unsafe path/);
+      expect(fs.existsSync(path.join(incoming, 'cv.yml'))).toBe(true);
+    });
+  });
+
+  // The manifest is the commit point: written last, a crash leaves the previous
+  // manifest intact and a re-run is still correct.
+  describe('the manifest is written last', () => {
+    test('a missing staged file aborts before the manifest is replaced', () => {
+      const graph = makeGraph(tmp);
+      const site = makeSite(tmp);
+      const incoming = seedPrevious(site);
+      // The new export lists a file that is not on disk — a half-finished write.
+      const exportDir = path.join(graph, '.logseq/plugins/storages', PLUGIN_ID, EXPORT_PREFIX);
+      fs.rmSync(path.join(exportDir, 'profile.yml'));
+
+      expect(() => runSync(['--graph', graph, '--site', site])).toThrow();
+
+      // The previous manifest survives, so the next run still knows what the
+      // last export owned.
+      expect(JSON.parse(fs.readFileSync(path.join(incoming, 'manifest.json'), 'utf8')).exported_at)
+        .toBe('2025-01-01T00:00:00.000Z');
+    });
+
+    function seedPrevious(site) {
+      const incoming = path.join(site, '_incoming');
+      fs.mkdirSync(incoming, { recursive: true });
+      fs.writeFileSync(path.join(incoming, 'manifest.json'), JSON.stringify({
+        schema_version: 1,
+        exported_at: '2025-01-01T00:00:00.000Z',
+        files: ['cv.yml', 'manifest.json'],
+      }));
+      return incoming;
+    }
+  });
+
   describe('refuses to guess a destination', () => {
     test('exits non-zero when --site is omitted', () => {
       const graph = makeGraph(tmp);
@@ -213,19 +365,26 @@ describe('sync.sh', () => {
       expect(fs.existsSync(path.join(site, '_incoming'))).toBe(false);
     });
 
-    // The summary block runs after every copy has already happened, so it must
-    // never decide the exit status: a wrapper reading the code would otherwise
-    // treat a completed sync as a failure and possibly re-run it.
-    test('still succeeds when manifest.json is not valid JSON', () => {
+    // The manifest is now the copy plan, so an unreadable one is fatal *before*
+    // anything is written — which is where the PR 0 review said a validity
+    // check belongs, rather than as a side effect after the copy.
+    test('refuses to copy when manifest.json is not valid JSON', () => {
       const graph = makeGraph(tmp, { manifestContent: 'NOT JSON{' });
       const site = makeSite(tmp);
 
-      const stderr = [];
-      expect(() => runSync(['--graph', graph, '--site', site], {}, stderr)).not.toThrow();
+      expect(() => runSync(['--graph', graph, '--site', site])).toThrow();
+      expect(fs.existsSync(path.join(site, '_incoming', 'cv.yml'))).toBe(false);
+    });
 
-      expect(fs.existsSync(path.join(site, '_incoming', 'cv.yml'))).toBe(true);
-      expect(fs.readFileSync(path.join(site, '_incoming', 'manifest.json'), 'utf8')).toBe('NOT JSON{');
-      expect(stderr.join('')).toMatch(/manifest\.json may be malformed/);
+    test('refuses an export whose manifest lists no files', () => {
+      const graph = makeGraph(tmp, {
+        manifestContent: JSON.stringify({ schema_version: 1, exported_at: '2026-01-01T00:00:00.000Z' }),
+      });
+      const site = makeSite(tmp);
+
+      const stderr = [];
+      expect(() => runSync(['--graph', graph, '--site', site], {}, stderr)).toThrow();
+      expect(stderr.join('')).toMatch(/no files list/);
     });
 
     test('handles a graph path containing a quote', () => {

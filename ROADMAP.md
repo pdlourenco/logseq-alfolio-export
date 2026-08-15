@@ -55,26 +55,26 @@ Roles are fixed from here on: the authoring session implements every phase (incl
 | Item | Source | Status |
 |---|---|---|
 | Test harness (P4) | seed.md | ✅ 173 tests merged — fixtures are unverified guesses |
-| `sync.sh` must target `_incoming/` only | contract v1 (#1, gap 1) | ❌ **PR 0** — live data-loss hazard |
-| `manifest.json` `schema_version` | contract v1 (#1, gap 2) | ❌ PR 2.5 |
-| `manifest.json` content hashes | contract v1 (#1, gap 3) | ❌ PR 2.5 — hard dependency on PR 2 sorting |
-| `files` list completeness | contract v1 (#1, gap 4) | ❌ PR 2.5 |
-| `plugin_version` from `package.json` | contract v1 (#1, gap 5) | ❌ PR 2.5 |
+| `sync.sh` must target `_incoming/` only | contract v1 (#1, gap 1) | ✅ PR 0 |
+| `manifest.json` `schema_version` | contract v1 (#1, gap 2) | ✅ PR 2.5 |
+| `manifest.json` content hashes | contract v1 (#1, gap 3) | ✅ PR 2.5 — hard dependency on PR 2 sorting |
+| `files` list completeness | contract v1 (#1, gap 4) | ✅ PR 2.5 |
+| `plugin_version` from `package.json` | contract v1 (#1, gap 5) | ✅ PR 2.5 |
 | Empirical property-shape validation (P1) | seed.md | ❌ PR 3 (capture) + one human run |
 | Sandbox path verification (P1) | seed.md | ❌ Same human run; then fix README/sync.sh source path |
-| `(PhD)` suffix bug, paren-ref warning (P1) | seed.md | ❌ PR 2 |
+| `(PhD)` suffix bug, paren-ref warning (P1) | seed.md | ✅ PR 2 |
 | Blog body extraction (P1) | seed.md | ❌ PR 4 |
-| Validation/lint pass (P2) | seed.md | ❌ PR 2 |
-| Determinism/sorting (P2) | seed.md | ❌ PR 2 |
-| Dry-run mode (P2) | seed.md | ❌ PR 2 |
-| Hardcoded site-name remediation | review finding | ❌ PR 2 |
+| Validation/lint pass (P2) | seed.md | ✅ PR 2 |
+| Determinism/sorting (P2) | seed.md | ✅ PR 2 |
+| Dry-run mode (P2) | seed.md | ✅ PR 2 |
+| Hardcoded site-name remediation | review finding | ✅ PR 2 |
 | Adapter layer (P3) | seed.md | ❌ PR 3 |
 | `unsupportedGraphType` + runtime DB detection (P3) | seed.md | ❌ PR 4 (verified feasible; needs CDN bump) |
-| `toYAML` quoting holes (silent corruption) | review finding | ❌ PR 1 |
-| `toYAML` structural holes (unparseable output) | review finding | ❌ PR 1 — latent, guarded only by key order |
-| Property-based ("Monte Carlo") tests | new | ❌ PR 1, PR 3 |
+| `toYAML` quoting holes (silent corruption) | review finding | ✅ PR 1 |
+| `toYAML` structural holes (unparseable output) | review finding | ✅ PR 1 |
+| Property-based ("Monte Carlo") tests | new | ✅ PR 1 (serializer, parsers, determinism); PR 3 adds privacy |
 | Snapshot contract tests | new | ❌ PR 3 |
-| CI | new | ❌ PR 1 |
+| CI | new | ✅ PR 1 |
 
 ---
 
@@ -122,10 +122,25 @@ Closes issue #1 gaps 2–5. Must land before PR 3 so snapshots freeze a manifest
 
 - Add `"schema_version": 1` to `manifest.json`.
 - Move the manifest/`files` computation **after** the blog loop, and include `manifest.json` itself per the contract's cross-check rules, so `files` matches what's written to disk in both directions.
-- `plugin_version` read from `package.json` instead of the hardcoded `"0.1.0"`. Note: with no build step and `index.html` loading from CDN, this needs a runtime `fetch('./package.json')` (or documented duplication if fetch proves unavailable in the sandbox). This **breaks `tests/integration/runExport.test.js:84`**, which asserts `'0.1.0'` literally — updating that test is part of this PR.
+- `plugin_version` read from `package.json` instead of the hardcoded `"0.1.0"`. Note: with no build step and `index.html` loading from CDN, this needs a runtime `fetch('./package.json')` (or documented duplication if fetch proves unavailable in the sandbox). This needs the test environment to serve `package.json`; doing that in the shared mock keeps `tests/integration/runExport.test.js:84`'s assertion true rather than rewriting it.
 - Add `"hashes": { "<file>": "<lowercase hex sha256>", ... }` for **every exported file except `manifest.json` itself** — a manifest cannot contain its own hash, and issue #1's example omits it. Note the asymmetry with the previous bullet: `files` includes `manifest.json`, `hashes` does not. Depends on PR 2's sorting being merged (see above).
-- **Decide what an all-dropped mapping serializes to** (raised in the PR 1 review). `toYAML({a: null})` emits an empty string, and an empty document does not parse. **Latent, not live**: no output file reaches this today — `transformProfile` returns `{}` rather than a mapping of nulls, `cv.yml`'s top-level values are arrays (which emit `[]`), and `personal.yml` / `publication_overrides.yml` emit `{}` when empty. It would take a future transformer that assigns a null-valued key to surface it. The choice is between an empty file, which fails loudly at parse time, and `{}`, which validates against the tolerant contract schema and yields a silently empty section — the failure class this project keeps hitting. Decide it here, where "well-formed export" acquires a definition; do not treat it as fixing a production bug.
-- **Decide what happens to stale files in `_incoming/`** (raised in the PR 0 review). `sync.sh` copies but never removes, so an entry dropped from the graph — a blog post, say — persists in the destination after the export stops listing it. Harmless today only because `files` is incomplete anyway; the moment this PR makes `files` authoritative, a leftover file is exactly the condition the transform's both-directions cross-check fails on. Either `sync.sh` clears `_incoming/` before copying, or the transform tolerates extras. Make it a deliberate call here rather than discovering it when the cross-check starts failing.
+- **All-dropped mapping — DECIDED: emit `{}`, whole documents only** (site repo D65). `toYAML({a: null})` emitted an empty string; a root mapping now emits `{}`. Nested `key:` with nothing under it is unchanged, because the consumer treats explicit-null and absent as equivalent (its D28), so changing that would be a semantic change rather than a spelling one. Still **latent, not live**: no output file reaches this today.
+
+  Two arguments used to justify this earlier were checked against the consumer and **do not hold** — recorded here so they are not repeated:
+    - *"An empty file fails loudly at parse time."* It does not. `bin/transform.py` does `yaml.safe_load(text) or {}`, and none of the four content schemas set `required` or `minProperties`, so an empty file and `{}` are indistinguishable to this consumer.
+    - *"An empty file is indistinguishable from a truncated copy."* Mostly not: a zero-byte file has a well-defined sha256, so truncation is caught wherever `hashes` lists the file. The gap only opens when `hashes` is absent, which the schema permits.
+
+  The reason that survives: **`or {}` is the consumer's defence, not the format's guarantee.** This is a versioned API and must not depend on a consumer being tolerant.
+- **Stale files in `_incoming/` — DECIDED: prune by the previous manifest** (site repo D64). `sync.sh` reads the manifest already in `_incoming/`, deletes exactly the paths it listed that the new export does not write, and leaves everything else alone.
+
+  **Do not clear `_incoming/`.** It is not exclusively the plugin's: the site keeps `README.md` there, and `papers.src.bib` is staged by hand from Zotero on a different cadence. Both are exempt from the consumer's manifest cross-check (its `MANIFEST_EXEMPT`, matched on exact relative path at the export root), and that exemption list is the one check standing between a partial copy and a half-built site — do not ask for it to be widened.
+
+  Three requirements, the first load-bearing:
+    1. **Write `manifest.json` last.** Order is: write the new files → prune the previous manifest's paths that are not in the new set → write the new manifest. It is the commit point. Written first, a crash leaves a manifest naming files that do not exist *and* destroys the record of what the previous export owned, stranding stale files permanently.
+    2. **An unreadable previous manifest prunes nothing, and says so.** Unparseable JSON, a missing `files` list, and an unknown `schema_version` are all "no previous export". Do not guess — a stale file is recoverable, a wrong deletion is not.
+    3. **Delete only listed file paths**, never directories. An already-absent entry is not an error; a leftover empty directory is harmless, since the consumer's integrity check filters on files.
+
+  Deferred, with a trigger: exporting into a plugin-owned subdirectory (`_incoming/graph/`) would make ownership positional and this failure mode structurally impossible, but costs a contract v2 and a consumer change. Revisit if hand-staging in `_incoming/` grows beyond `papers.src.bib` and `README.md`.
 - **Verify sha256 is reachable in the sandbox before committing to it.** With no build step and a zero-dependency runtime, the only implementation is `crypto.subtle.digest('SHA-256', …)`, which is async and exposed only in secure contexts. If the plugin iframe turns out not to qualify, say so in the PR and fall back to a documented alternative rather than vendoring a hash implementation — same hedge as the `fetch('./package.json')` bullet above.
 
 **Acceptance:** manifest validates against the site repo's [`docs/intermediate-schema/`](https://github.com/pdlourenco/pdlourenco.github.io/tree/master/docs/intermediate-schema) manifest schema; `files` equals the set of written files including `manifest.json` and blog posts; `hashes` covers exactly that set minus `manifest.json`; hashes recomputed over the written bytes match; `runExport.test.js` updated; repeat runs on identical input produce identical hashes; **stale-file handling and all-dropped-mapping serialization each decided and stated** — whichever way they go, the PR says so and tests the behaviour it chose.
