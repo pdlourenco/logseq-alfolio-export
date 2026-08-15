@@ -637,8 +637,13 @@ async function extractNamespaceEntries(pageName, cache) {
 }
 
 /** Find all standalone pages with website:: matching configured site */
+// Currently uncalled: runExport's page scan replaced it, and its result was
+// being discarded. Kept because PR 3's GraphReader seam needs a datalog page
+// query and this is that query — but it goes through getWebsiteName() like
+// everything else, so reviving it cannot silently select nothing on a graph
+// whose websiteName differs. PR 3 should adopt it into the reader or delete it.
 async function findWebsitePages(cache) {
-  const siteName = logseq.settings?.websiteName || "plourenco.eu";
+  const siteName = getWebsiteName();
   try {
     const results = await logseq.DB.datascriptQuery(`
       [:find (pull ?b [*])

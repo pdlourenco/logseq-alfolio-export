@@ -169,33 +169,35 @@ describe('entryProps', () => {
   });
 });
 
+// Synthetic names per the roadmap's standing decision. Provenance: the
+// two-degrees-one-person case is Hugo Pereira in seed.md P1.
 describe('stripDisambiguationSuffix', () => {
   test.each([
-    ['Hugo Pereira (PhD)', 'Hugo Pereira'],
-    ['Hugo Pereira (M.Sc.)', 'Hugo Pereira'],
-    ['Hugo Pereira (MSc)', 'Hugo Pereira'],
-    ['Hugo Pereira (Ph.D.)', 'Hugo Pereira'],
-    ['Hugo Pereira (BSc)', 'Hugo Pereira'],
-    ['Hugo Pereira (Postdoc)', 'Hugo Pereira'],
-    ['Hugo Pereira (phd)', 'Hugo Pereira'],
+    ['Rita Marques (PhD)', 'Rita Marques'],
+    ['Rita Marques (M.Sc.)', 'Rita Marques'],
+    ['Rita Marques (MSc)', 'Rita Marques'],
+    ['Rita Marques (Ph.D.)', 'Rita Marques'],
+    ['Rita Marques (BSc)', 'Rita Marques'],
+    ['Rita Marques (Postdoc)', 'Rita Marques'],
+    ['Rita Marques (phd)', 'Rita Marques'],
   ])('strips %s', (input, expected) => {
     expect(stripDisambiguationSuffix(input)).toBe(expected);
   });
 
   test('leaves names without a suffix alone', () => {
-    expect(stripDisambiguationSuffix('Hugo Pereira')).toBe('Hugo Pereira');
+    expect(stripDisambiguationSuffix('Rita Marques')).toBe('Rita Marques');
   });
 
   test('does not strip a meaningful parenthetical', () => {
     // Only degree markers are disambiguators; anything else is part of the name.
-    expect(stripDisambiguationSuffix('Instituto Superior Técnico (IST)'))
-      .toBe('Instituto Superior Técnico (IST)');
-    expect(stripDisambiguationSuffix('Bruno Guerreiro (NOVA FCT)'))
-      .toBe('Bruno Guerreiro (NOVA FCT)');
+    expect(stripDisambiguationSuffix('Universidade do Exemplo (UDEX)'))
+      .toBe('Universidade do Exemplo (UDEX)');
+    expect(stripDisambiguationSuffix('Helena Duarte (UDEX)'))
+      .toBe('Helena Duarte (UDEX)');
   });
 
   test('only strips at the end', () => {
-    expect(stripDisambiguationSuffix('(PhD) Hugo')).toBe('(PhD) Hugo');
+    expect(stripDisambiguationSuffix('(PhD) Rita')).toBe('(PhD) Rita');
   });
 
   test('passes non-strings through', () => {

@@ -135,7 +135,9 @@ describe('toYAML round-trip law', () => {
   });
 
   test('lists of entry objects round-trip regardless of key order', () => {
-    const entry = fc.dictionary(fc.string({ minLength: 1 }), fc.oneof(scalar, fc.array(scalar, { maxLength: 3 })), {
+    // Uses the filtered `key` for the same reason as the generators above:
+    // `__proto__` is a JS object-model artifact in the comparison, not YAML.
+    const entry = fc.dictionary(key, fc.oneof(scalar, fc.array(scalar, { maxLength: 3 })), {
       minKeys: 1,
       maxKeys: 5,
     });

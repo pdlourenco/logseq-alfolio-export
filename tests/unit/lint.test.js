@@ -21,45 +21,48 @@ const rules = (lint) => lint.warnings.map((w) => w.rule);
 
 describe('unresolved-ref', () => {
   test('warns when a [[ref]] matches no page', () => {
-    const lint = new ExportLint(fakeCache({ pages: ['GMV'] }));
+    const lint = new ExportLint(fakeCache({ pages: ['Orbital Systems'] }));
     lint.checkEntry({ _blockContent: '- Engineer', type: 'experience', organization: '[[Nowhere]]' });
     expect(rules(lint)).toContain('unresolved-ref');
     expect(lint.warnings.find((w) => w.rule === 'unresolved-ref').message).toMatch(/\[\[Nowhere\]\]/);
   });
 
   test('does not warn when the ref resolves', () => {
-    const lint = new ExportLint(fakeCache({ pages: ['GMV'] }));
-    lint.checkEntry({ _blockContent: '- Engineer', type: 'experience', organization: '[[GMV]]' });
+    const lint = new ExportLint(fakeCache({ pages: ['Orbital Systems'] }));
+    lint.checkEntry({ _blockContent: '- Engineer', type: 'experience', organization: '[[Orbital Systems]]' });
     expect(rules(lint)).not.toContain('unresolved-ref');
   });
 
   test('resolves through an alias', () => {
-    const cache = fakeCache({ pages: ['Instituto Superior Técnico'] });
-    cache.aliasMap['ist'] = 'Instituto Superior Técnico';
+    const cache = fakeCache({ pages: ['Universidade do Exemplo'] });
+    cache.aliasMap['udex'] = 'Universidade do Exemplo';
     const lint = new ExportLint(cache);
-    lint.checkEntry({ _blockContent: '- Degree', university: '[[IST]]' });
+    lint.checkEntry({ _blockContent: '- Degree', university: '[[UDEX]]' });
     expect(rules(lint)).not.toContain('unresolved-ref');
   });
 });
 
+// Fixture names are synthetic per the roadmap's standing decision. Provenance:
+// this is the Gil Serrano case from seed.md P1, where the source graph had the
+// supervisor's affiliation baked into the page ref.
 describe('ref-parentheses', () => {
-  test('warns on the Gil Serrano case — affiliation baked into the link', () => {
+  test('warns when an affiliation is baked into the link', () => {
     const lint = new ExportLint(fakeCache());
     lint.checkEntry({
-      _blockContent: '- Gil Serrano',
+      _blockContent: '- Tomás Aguiar',
       type: 'student',
-      supervisor: 'Prof. [[Bruno J. Guerreiro (NOVA FCT)]]',
+      supervisor: 'Prof. [[Helena Duarte (UDEX)]]',
     });
     expect(rules(lint)).toContain('ref-parentheses');
   });
 
   test('does not warn on a clean person ref', () => {
-    const lint = new ExportLint(fakeCache({ people: { 'Bruno J. Guerreiro': 'NOVA FCT' } }));
+    const lint = new ExportLint(fakeCache({ people: { 'Helena Duarte': 'UDEX' } }));
     lint.checkEntry({
-      _blockContent: '- Gil Serrano',
+      _blockContent: '- Tomás Aguiar',
       type: 'student',
-      supervisor: 'Prof. [[Bruno J. Guerreiro]]',
-      university: '[[Bruno J. Guerreiro]]',
+      supervisor: 'Prof. [[Helena Duarte]]',
+      university: '[[Helena Duarte]]',
     });
     expect(rules(lint)).not.toContain('ref-parentheses');
   });
@@ -91,8 +94,8 @@ describe('bad-date', () => {
 
 describe('missing-property', () => {
   test('warns when a typed entry lacks a property it needs', () => {
-    const lint = new ExportLint(fakeCache({ pages: ['GMV'] }));
-    lint.checkEntry({ _blockContent: '- Engineer', type: 'experience', organization: '[[GMV]]' });
+    const lint = new ExportLint(fakeCache({ pages: ['Orbital Systems'] }));
+    lint.checkEntry({ _blockContent: '- Engineer', type: 'experience', organization: '[[Orbital Systems]]' });
     // experience needs position and start as well
     const missing = lint.warnings.filter((w) => w.rule === 'missing-property');
     expect(missing.length).toBe(2);
@@ -101,12 +104,12 @@ describe('missing-property', () => {
   });
 
   test('does not warn when every required property is present', () => {
-    const lint = new ExportLint(fakeCache({ pages: ['GMV'] }));
+    const lint = new ExportLint(fakeCache({ pages: ['Orbital Systems'] }));
     lint.checkEntry({
       _blockContent: '- Engineer',
       type: 'experience',
       position: 'Engineer',
-      organization: '[[GMV]]',
+      organization: '[[Orbital Systems]]',
       start: '[[2020/01]]',
     });
     expect(rules(lint)).not.toContain('missing-property');
@@ -126,21 +129,21 @@ describe('unknown-supervisor', () => {
       _blockContent: '- Ana',
       type: 'student',
       supervisor: 'Prof. [[Nobody Known]]',
-      university: '[[IST]]',
+      university: '[[UDEX]]',
     });
     expect(rules(lint)).toContain('unknown-supervisor');
   });
 
   test('does not warn when the person page carries an affiliation', () => {
     const lint = new ExportLint(fakeCache({
-      people: { 'Pedro Batista': 'Instituto Superior Técnico' },
-      pages: ['IST'],
+      people: { 'Miguel Antunes': 'Universidade do Exemplo' },
+      pages: ['UDEX'],
     }));
     lint.checkEntry({
       _blockContent: '- Ana',
       type: 'student',
-      supervisor: 'Prof. [[Pedro Batista]]',
-      university: '[[IST]]',
+      supervisor: 'Prof. [[Miguel Antunes]]',
+      university: '[[UDEX]]',
     });
     expect(rules(lint)).not.toContain('unknown-supervisor');
   });
@@ -157,11 +160,11 @@ describe('icons-used', () => {
     const lint = new ExportLint(fakeCache());
     lint.checkAll([[
       { _blockContent: '- A', icon: 'up' },
-      { _blockContent: '- B', icon: 'ist' },
+      { _blockContent: '- B', icon: 'udex' },
       { _blockContent: '- C', icon: 'up' },
     ]]);
     const inventory = lint.warnings.find((w) => w.rule === 'icons-used');
-    expect(inventory.message).toMatch(/ist, up/);
+    expect(inventory.message).toMatch(/udex, up/);
   });
 
   test('is omitted entirely when no icons are referenced', () => {

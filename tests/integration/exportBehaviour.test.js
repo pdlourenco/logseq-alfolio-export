@@ -16,8 +16,8 @@ function studentPage(site, { name = 'Ana Silva', start = '[[2021/09]]' } = {}) {
       properties: {
         website: `[[${site}]]`,
         type: '[[student]]',
-        university: '[[IST]]',
-        supervisor: 'Prof. [[Pedro Batista]]',
+        university: '[[UDEX]]',
+        supervisor: 'Prof. [[Miguel Antunes]]',
         'thesis-type': 'MSc',
         start,
       },
@@ -98,12 +98,12 @@ describe('export behaviour', () => {
 
     test('a degree suffix is stripped from the exported name', async () => {
       installGraph([{
-        page: { name: 'Hugo Pereira', originalName: 'Hugo Pereira', properties: { website: '[[plourenco.eu]]' } },
+        page: { name: 'Rita Marques', originalName: 'Rita Marques', properties: { website: '[[plourenco.eu]]' } },
         blocks: [{
-          content: '- Hugo Pereira (PhD)\n  type:: [[student]]',
+          content: '- Rita Marques (PhD)\n  type:: [[student]]',
           properties: {
             website: '[[plourenco.eu]]', type: '[[student]]',
-            university: '[[IST]]', supervisor: 'Prof. [[Pedro Batista]]', start: '[[2020/09]]',
+            university: '[[UDEX]]', supervisor: 'Prof. [[Miguel Antunes]]', start: '[[2020/09]]',
           },
         }],
       }]);
@@ -111,7 +111,7 @@ describe('export behaviour', () => {
       const { files } = await runExport({ now: FIXED_NOW });
       const cv = yaml.load(files['cv.yml']);
 
-      expect(cv.teaching.supervised_students[0].name).toBe('Hugo Pereira');
+      expect(cv.teaching.supervised_students[0].name).toBe('Rita Marques');
     });
   });
 

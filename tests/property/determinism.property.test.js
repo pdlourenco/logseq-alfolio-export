@@ -20,17 +20,17 @@ const cvEntry = (props, content) => ({ content, properties: props });
 function buildGraph() {
   const cvBlocks = {
     'CV/Experience': [
-      cvEntry({ type: '[[experience]]', position: 'Engineer', organization: '[[GMV]]', start: '[[2019/03]]' }, '- Engineer'),
-      cvEntry({ type: '[[experience]]', position: 'Researcher', organization: '[[IST]]', start: '[[2022/01]]' }, '- Researcher'),
-      cvEntry({ type: '[[experience]]', position: 'Intern', organization: '[[GMV]]', start: '[[2016/06]]' }, '- Intern'),
+      cvEntry({ type: '[[experience]]', position: 'Engineer', organization: '[[Orbital Systems]]', start: '[[2019/03]]' }, '- Engineer'),
+      cvEntry({ type: '[[experience]]', position: 'Researcher', organization: '[[UDEX]]', start: '[[2022/01]]' }, '- Researcher'),
+      cvEntry({ type: '[[experience]]', position: 'Intern', organization: '[[Orbital Systems]]', start: '[[2016/06]]' }, '- Intern'),
     ],
     'CV/Education': [
       cvEntry({ type: '[[education]]', degree: 'PhD', start: '[[2018/09]]' }, '- PhD'),
       cvEntry({ type: '[[education]]', degree: 'MSc', start: '[[2015/09]]' }, '- MSc'),
     ],
     'CV/Awards': [
-      cvEntry({ type: '[[award]]', date: '[[2021/05]]', awarder: '[[IST]]' }, '- Best Paper'),
-      cvEntry({ type: '[[award]]', date: '[[2019/11]]', awarder: '[[GMV]]' }, '- Merit Grant'),
+      cvEntry({ type: '[[award]]', date: '[[2021/05]]', awarder: '[[UDEX]]' }, '- Best Paper'),
+      cvEntry({ type: '[[award]]', date: '[[2019/11]]', awarder: '[[Orbital Systems]]' }, '- Merit Grant'),
     ],
     'CV/Skills': [
       cvEntry({ type: '[[skill]]', group: 'Programming', level: '4' }, '- Rust'),
@@ -66,7 +66,7 @@ function buildGraph() {
         type: `[[${type}]]`,
         start,
         ...(type === 'student'
-          ? { university: '[[IST]]', supervisor: 'Prof. [[Pedro Batista]]', 'thesis-type': 'MSc' }
+          ? { university: '[[UDEX]]', supervisor: 'Prof. [[Miguel Antunes]]', 'thesis-type': 'MSc' }
           : {}),
       },
     }],
@@ -78,9 +78,9 @@ function buildGraph() {
   }));
 
   const supportPages = [
-    { name: 'IST', originalName: 'IST', properties: { icon: 'ist', abbreviation: 'IST' } },
-    { name: 'GMV', originalName: 'GMV', properties: { icon: 'gmv' } },
-    { name: 'Pedro Batista', originalName: 'Pedro Batista', properties: { type: '[[person]]', affiliation: '[[IST]]' } },
+    { name: 'UDEX', originalName: 'UDEX', properties: { icon: 'ist', abbreviation: 'UDEX' } },
+    { name: 'Orbital Systems', originalName: 'Orbital Systems', properties: { icon: 'gmv' } },
+    { name: 'Miguel Antunes', originalName: 'Miguel Antunes', properties: { type: '[[person]]', affiliation: '[[UDEX]]' } },
   ];
 
   return {
