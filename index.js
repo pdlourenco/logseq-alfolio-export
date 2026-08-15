@@ -51,6 +51,8 @@ function toYAMLMapping(obj, indent, dropNulls) {
   const pad = "  ".repeat(indent);
   const entries = Object.entries(obj);
   if (entries.length === 0) return pad + "{}";
+  // A mapping whose keys all drop is handled at the end of this function: at
+  // the root it becomes "{}" so the file is always a well-formed document.
 
   const lines = [];
   for (const [rawKey, v] of entries) {
@@ -70,6 +72,14 @@ function toYAMLMapping(obj, indent, dropNulls) {
       lines.push(pad + k + ": " + toYAML(v).trim());
     }
   }
+  // Whole documents only (D65). A root mapping whose keys all dropped would
+  // otherwise emit nothing, and an empty file is not a well-formed YAML
+  // document — the site's transform survives it only because it defends with
+  // `yaml.safe_load(text) or {}`, and that is the consumer's defence, not this
+  // format's guarantee. Nested `key:` with nothing under it is left alone: the
+  // consumer treats explicit-null and absent as equivalent, so changing that
+  // would be a semantic change rather than a spelling one.
+  if (lines.length === 0 && indent === 0) return "{}";
   return lines.join("\n");
 }
 
@@ -341,6 +351,84 @@ class ResolutionCache {
       affiliation: affLabel,
     };
   }
+}
+
+// ============================================================================
+// Export manifest
+// ============================================================================
+
+// The intermediate-format contract version this export is produced against.
+// The site's transform refuses a version it does not know, and refuses an
+// export carrying none, rather than guessing at a shape. Bump only alongside
+// docs/intermediate-schema/ in the site repo.
+const SCHEMA_VERSION = 1;
+
+/**
+ * The plugin's released version, read from package.json rather than repeated
+ * as a literal so it cannot silently disagree with what shipped.
+ *
+ * There is no build step, so this is a runtime fetch relative to index.html.
+ * `plugin_version` is optional in the contract, so a failure omits the field
+ * and warns rather than substituting a guess — a stale hardcoded version is
+ * exactly the problem this replaces.
+ *
+ * Deliberately not cached: an export is a manual, occasional action, so one
+ * local read costs nothing, and a reloaded plugin reports its new version
+ * rather than whichever one the session started with.
+ */
+async function getPluginVersion(warnings) {
+  try {
+    const response = await fetch("./package.json");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const pkg = await response.json();
+    return pkg.version || null;
+  } catch (error) {
+    if (warnings) {
+      warnings.push({
+        rule: "plugin-version",
+        message: `could not read package.json (${error.message}); manifest omits plugin_version.`,
+      });
+    }
+    return null;
+  }
+}
+
+/** Lowercase hex SHA-256 of a string, or null where WebCrypto is unavailable. */
+async function sha256Hex(text) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const bytes = new TextEncoder().encode(text);
+  const digest = await subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Content hashes for every exported file *except* the manifest itself — a
+ * manifest cannot contain its own hash. This is what lets the consumer tell a
+ * truncated or half-finished copy from a real export.
+ *
+ * `hashes` is optional in the contract, so if WebCrypto turns out to be
+ * unavailable in the plugin sandbox the export still succeeds without it,
+ * with a warning. Vendoring a SHA-256 implementation would break the
+ * zero-dependency runtime rule for a field the contract calls optional.
+ */
+async function computeHashes(files, warnings) {
+  if (!globalThis.crypto?.subtle) {
+    if (warnings) {
+      warnings.push({
+        rule: "hashes-unavailable",
+        message: "WebCrypto is not available here, so manifest.json omits content hashes.",
+      });
+    }
+    return null;
+  }
+  const hashes = {};
+  for (const name of Object.keys(files).sort(cmpString)) {
+    hashes[name] = await sha256Hex(files[name]);
+  }
+  return hashes;
 }
 
 // ============================================================================
@@ -1069,27 +1157,6 @@ async function runExport(options = {}) {
     files["personal.yml"] = toYAML(sorted.personalPages);
     files["publication_overrides.yml"] = toYAML(sorted.pubOverrides);
 
-    // Manifest for the sync script
-    files["manifest.json"] = JSON.stringify({
-      exported_at: now.toISOString(),
-      plugin_version: "0.1.0",
-      website: siteName,
-      files: Object.keys(files),
-      counts: {
-        experience: cv.experience.length,
-        education: cv.education.length,
-        awards: cv.awards.length,
-        skills: cv.skills.length,
-        languages: cv.languages.length,
-        research_interests: cv.research_interests.length,
-        projects: cv.projects.length,
-        supervised_students: cv.teaching.supervised_students.length,
-        jury: cv.teaching.jury.length,
-        personal_pages: Object.keys(sorted.personalPages).length,
-        publication_overrides: Object.keys(sorted.pubOverrides).length,
-      },
-    }, null, 2);
-
     // Blog posts as individual files
     for (const entry of blogIdeas) {
       if (cleanProp(entry, "status") !== "published") continue;
@@ -1110,6 +1177,36 @@ async function runExport(options = {}) {
       // TODO: extract body from sub-bullets
       files[filename] = frontmatter;
     }
+
+    // 7b. Manifest last: every other file must exist before `files` and
+    // `hashes` can describe them. Building it earlier is what made `files`
+    // list four entries while five or more were written.
+    const hashes = await computeHashes(files, lint.warnings);
+    const pluginVersion = await getPluginVersion(lint.warnings);
+    const manifest = {
+      schema_version: SCHEMA_VERSION,
+      exported_at: now.toISOString(),
+      website: siteName,
+      // Includes manifest.json itself: the consumer cross-checks this list
+      // against what is on disk in both directions.
+      files: [...Object.keys(files), "manifest.json"].sort(cmpString),
+      counts: {
+        experience: cv.experience.length,
+        education: cv.education.length,
+        awards: cv.awards.length,
+        skills: cv.skills.length,
+        languages: cv.languages.length,
+        research_interests: cv.research_interests.length,
+        projects: cv.projects.length,
+        supervised_students: cv.teaching.supervised_students.length,
+        jury: cv.teaching.jury.length,
+        personal_pages: Object.keys(sorted.personalPages).length,
+        publication_overrides: Object.keys(sorted.pubOverrides).length,
+      },
+    };
+    if (pluginVersion) manifest.plugin_version = pluginVersion;
+    if (hashes) manifest.hashes = hashes;
+    files["manifest.json"] = JSON.stringify(manifest, null, 2);
 
     // 8. Report what the lint found. Warnings never fail the export.
     for (const warning of lint.warnings) {

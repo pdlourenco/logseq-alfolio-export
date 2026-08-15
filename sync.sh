@@ -81,6 +81,11 @@ fi
 
 INCOMING_DIR="$SITE_DIR/_incoming"
 
+if ! command -v python3 &>/dev/null; then
+  echo "❌ python3 is required (to read the export manifest safely)." >&2
+  exit 1
+fi
+
 echo "📦 Syncing from: $EXPORT_DIR"
 echo "📂 To:           $INCOMING_DIR"
 echo ""
@@ -88,30 +93,127 @@ echo ""
 mkdir -p "$INCOMING_DIR"
 
 # ============================================================================
-# Copy data files
+# Plan the sync
+#
+# What to copy comes from the NEW manifest, not from a glob: globbing the
+# export directory would also pick up files left over from a previous run,
+# which the destination would then reject as unlisted extras.
+#
+# What to delete comes from the PREVIOUS manifest in _incoming/ — exactly the
+# paths the last export owned and this one no longer writes. _incoming/ is not
+# exclusively ours (the site keeps README.md there, and papers.src.bib is
+# staged by hand from Zotero), so clearing the directory is not an option.
+# Anything we cannot account for is left alone.
 # ============================================================================
-for f in cv.yml profile.yml personal.yml publication_overrides.yml; do
-  if [ -f "$EXPORT_DIR/$f" ]; then
-    cp "$EXPORT_DIR/$f" "$INCOMING_DIR/$f"
-    echo "  ✅ $f → _incoming/$f"
-  fi
-done
+PLAN="$(python3 - "$EXPORT_DIR" "$INCOMING_DIR" <<'PYEOF'
+import json, os, sys
 
-# The manifest keeps its name: the transform reads _incoming/manifest.json.
+export_dir, incoming_dir = sys.argv[1], sys.argv[2]
+out = []
+
+def safe(rel):
+    """Reject anything that could escape the directory we are writing into."""
+    if not rel or os.path.isabs(rel) or rel.startswith("/"):
+        return False
+    parts = rel.replace("\\", "/").split("/")
+    return ".." not in parts and "" not in parts
+
+with open(os.path.join(export_dir, "manifest.json"), encoding="utf-8") as fh:
+    new_manifest = json.load(fh)
+
+# The manifest is the copy plan, so an export that does not list its own files
+# cannot be synced. Exports before contract v1 are the likely cause; copying a
+# guessed set would stage files the destination then rejects as unlisted.
+if not isinstance(new_manifest.get("files"), list) or not new_manifest["files"]:
+    sys.stderr.write(
+        "manifest.json has no files list, so there is nothing to copy from.\n"
+        "   Re-run the export with a current version of the plugin.\n"
+    )
+    raise SystemExit(1)
+
+new_files = [f for f in new_manifest["files"] if f != "manifest.json"]
+for rel in new_files:
+    if not safe(rel):
+        out.append(f"WARN\tmanifest lists an unsafe path, skipping: {rel!r}")
+        continue
+    out.append(f"COPY\t{rel}")
+
+# A previous manifest we cannot read means "no previous export": prune nothing
+# rather than guess. Deleting on a guess is unrecoverable; a stale file is not.
+prev_path = os.path.join(incoming_dir, "manifest.json")
+prev_files, reason = None, None
+if not os.path.exists(prev_path):
+    reason = "no previous manifest in _incoming/ — nothing to prune"
+else:
+    try:
+        with open(prev_path, encoding="utf-8") as fh:
+            prev = json.load(fh)
+    except (json.JSONDecodeError, OSError) as exc:
+        reason = f"previous manifest is unreadable ({exc}) — pruning nothing"
+    else:
+        if prev.get("schema_version") != new_manifest.get("schema_version"):
+            reason = (
+                f"previous manifest declares schema_version "
+                f"{prev.get('schema_version')!r} — pruning nothing"
+            )
+        elif not isinstance(prev.get("files"), list):
+            reason = "previous manifest has no files list — pruning nothing"
+        else:
+            prev_files = prev["files"]
+
+if prev_files is None:
+    out.append(f"WARN\t{reason}")
+else:
+    keep = set(new_files) | {"manifest.json"}
+    for rel in sorted(set(prev_files) - keep):
+        if not safe(rel):
+            out.append(f"WARN\tprevious manifest lists an unsafe path, skipping: {rel!r}")
+            continue
+        out.append(f"PRUNE\t{rel}")
+
+print("\n".join(out))
+PYEOF
+)" || { echo "❌ Could not read $EXPORT_DIR/manifest.json — the export looks incomplete." >&2; exit 1; }
+
+# ============================================================================
+# Execute: copy, then prune, then the manifest LAST.
+#
+# The manifest is the commit point. Written first, a crash would leave it
+# naming files that do not exist and destroy the only record of what the
+# previous export owned, stranding stale files permanently. Written last, a
+# crash leaves the previous manifest intact and re-running is still correct.
+# ============================================================================
+while IFS=$'\t' read -r action rel; do
+  [ -n "${action:-}" ] || continue
+  case "$action" in
+    COPY)
+      src="$EXPORT_DIR/$rel"
+      if [ ! -f "$src" ]; then
+        echo "❌ manifest lists $rel but it is not in the export directory." >&2
+        echo "   Refusing to write a manifest that does not describe the copy." >&2
+        exit 1
+      fi
+      mkdir -p "$(dirname "$INCOMING_DIR/$rel")"
+      cp "$src" "$INCOMING_DIR/$rel"
+      echo "  ✅ $rel → _incoming/$rel"
+      ;;
+    PRUNE)
+      # Files only, never directories. An already-absent entry is not an error;
+      # an empty directory left behind is harmless (the site's integrity check
+      # only looks at files).
+      if [ -f "$INCOMING_DIR/$rel" ]; then
+        rm -f "$INCOMING_DIR/$rel"
+        echo "  🗑  removed stale _incoming/$rel"
+      fi
+      ;;
+    WARN)
+      echo "  ⚠️  $rel" >&2
+      ;;
+  esac
+done <<< "$PLAN"
+
 cp "$EXPORT_DIR/manifest.json" "$INCOMING_DIR/manifest.json"
 echo "  ✅ manifest.json → _incoming/manifest.json"
-
-# ============================================================================
-# Copy blog posts
-# ============================================================================
-if [ -d "$EXPORT_DIR/blog" ]; then
-  mkdir -p "$INCOMING_DIR/blog"
-  for f in "$EXPORT_DIR/blog/"*.md; do
-    [ -f "$f" ] || continue
-    cp "$f" "$INCOMING_DIR/blog/$(basename "$f")"
-    echo "  ✅ blog/$(basename "$f") → _incoming/blog/$(basename "$f")"
-  done
-fi
 
 echo ""
 

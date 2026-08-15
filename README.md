@@ -91,13 +91,25 @@ After exporting, run the companion script to copy files to your Jekyll site:
 `--site` is required and has no default, so a stray `./sync.sh` cannot reach a
 real site checkout by accident.
 
-The sync script copies into `_incoming/` and nowhere else:
-- `cv.yml` → `_incoming/cv.yml`
-- `profile.yml` → `_incoming/profile.yml`
-- `personal.yml` → `_incoming/personal.yml`
-- `publication_overrides.yml` → `_incoming/publication_overrides.yml`
-- `manifest.json` → `_incoming/manifest.json`
-- `blog/*.md` → `_incoming/blog/*.md`
+The sync script copies into `_incoming/` and nowhere else. It copies **exactly
+what the export's `manifest.json` lists** — `cv.yml`, `profile.yml`,
+`personal.yml`, `publication_overrides.yml`, `blog/*.md`, and the manifest
+itself — rather than globbing, so a file left over from an earlier run in the
+plugin's storage is never staged.
+
+It also **prunes**: files the *previous* manifest listed that this export no
+longer writes are deleted, so a blog post removed from your graph does not
+linger in `_incoming/`. Pruning is deliberately conservative:
+
+- It never clears the directory. `_incoming/` also holds files the plugin does
+  not own — the site's own `README.md`, and `papers.src.bib` staged by hand.
+  Only paths a previous export actually listed are ever removed.
+- If the previous manifest is missing, unparseable, or of an unknown
+  `schema_version`, nothing is pruned and the script says so.
+- `manifest.json` is written **last**. It is the commit point: if a sync fails
+  partway, the previous manifest survives and re-running is still correct.
+
+Requires `python3` (to read the manifest safely).
 
 Then review the diff in `_incoming/`, commit it, and run the site's transform to
 regenerate `_data/` and `_posts/`. **Nothing here writes those directories** —
@@ -200,6 +212,18 @@ Exported files are written to the plugin's sandbox storage:
 └── blog/
     └── 2024-06-15-gnc-simulation-pipeline.md
 ```
+
+`manifest.json` describes the export for the consuming site:
+
+| Field | Purpose |
+|---|---|
+| `schema_version` | Intermediate-format contract version (currently `1`). The site refuses a version it does not know rather than guessing. |
+| `exported_at` | ISO 8601 timestamp. Informational. |
+| `plugin_version` | Read from `package.json`, so it cannot disagree with what shipped. Omitted with a warning if unreadable. |
+| `website` | The site tag pages were filtered on. |
+| `files` | Every file in the export, including `manifest.json` and blog posts. |
+| `hashes` | SHA-256 per file, excluding `manifest.json` itself — detects a truncated or half-finished copy. Omitted with a warning if WebCrypto is unavailable. |
+| `counts` | Per-section entry counts, as a sanity check. |
 
 ## Development
 
