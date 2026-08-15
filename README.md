@@ -64,7 +64,7 @@ rather than against assumptions. It writes two files to plugin storage:
 | File | Contents | Sharing |
 |---|---|---|
 | `_logseq_capture/dump.json` | Raw `getAllPages()` / `getPageBlocksTree()` output — **your entire graph**, including untagged `Personal/` pages the export never touches | **Never commit or paste this.** It stays on your machine |
-| `_logseq_capture/shapes.json` | Property key names, the JS type each arrives as, and *redacted* value shapes — every letter becomes `a`, every digit `9` | Safe to share |
+| `_logseq_capture/shapes.json` | Property key names, the JS type each arrives as, and *redacted* value shapes and page names — every letter becomes `a`, every digit `9` | Safe to share |
 
 A redacted shape keeps the structure and drops the content:
 
@@ -77,6 +77,17 @@ A redacted shape keeps the structure and drops the content:
 which is enough to answer whether `type::` arrives as a string or an array,
 whether keys keep their kebab-case, and whether markdown links survive — without
 revealing a single name.
+
+**Page names are redacted too**, so `Personal/Therapy Notes` becomes
+`aaaaaaaa/aaaaaaa aaaaa`: the namespace structure survives for diagnosis, the
+title does not. Capture deliberately reads *every* page, including untagged
+`Personal/` ones, because it is sampling shapes rather than exporting — so
+nothing in this file may depend on a page having opted in.
+
+**Property key names are deliberately not redacted.** They are the schema being
+learned (`thesis-type`, `supervisor`), which is what makes the file useful, and a
+key name is not private the way a page title is. If your graph uses key names
+that are themselves sensitive, don't share the file.
 
 The capture also probes whether nested storage keys (`blog/post.md`) round-trip,
 and prints where to find the files, which answers where the sandbox actually

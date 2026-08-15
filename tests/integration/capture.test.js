@@ -192,6 +192,33 @@ describe('runCapture', () => {
     expect(shapes).toContain('secretkey');
   });
 
+  test('page names in seenOn are redacted too', async () => {
+    // The failure mode this guards: every *value* redacts to `aaaaaaa`, so the
+    // file looks safe at a glance, and the one unredacted field is the one
+    // nobody checks before pasting it somewhere public.
+    const shapes = await runCapture({ reader: graph(), now: new Date('2026-03-01T12:00:00.000Z') });
+    const sources = Object.values(shapes.property_keys).flatMap((entry) => entry.seenOn);
+
+    expect(sources.length).toBeGreaterThan(0);
+    for (const source of sources) {
+      expect(source).not.toContain('Diary');
+      expect(source).not.toContain('Personal');
+      expect(source).not.toContain('Experience');
+      // Only the page/block/child prefix, then redacted structure.
+      expect(source).toMatch(/^(page|block|child):[^A-Za-z0-9]*[a9\W]*$/u);
+    }
+  });
+
+  test('seenOn still shows where a property lives and how deep the namespace is', async () => {
+    // Redaction must not cost the diagnostic value: the prefix and the
+    // namespace separator are what make this field worth keeping.
+    const shapes = await runCapture({ reader: graph(), now: new Date('2026-03-01T12:00:00.000Z') });
+
+    expect(shapes.property_keys.type.seenOn[0]).toBe('block:aa/aaaaaaaaaa');
+    expect(shapes.property_keys['thesis-type'].seenOn[0]).toBe('child:aa/aaaaaaaaaa');
+    expect(shapes.property_keys.mood.seenOn[0]).toBe('block:aaaaaaaa/aaaaa');
+  });
+
   test('the raw dump does contain content, which is why it stays local', async () => {
     await runCapture({ reader: graph(), now: new Date('2026-03-01T12:00:00.000Z') });
     expect(stored[`${CAPTURE_PREFIX}/dump.json`]).toContain('Confidential Text');

@@ -43,14 +43,41 @@ function buildGraph(specs) {
       originalName: name,
       properties: spec.tagged ? { website: `[[${SITE}]]` } : {},
     });
+    // There are three routes out of the graph, guarded separately, and a
+    // generator that only produces personal-page content can only exercise
+    // one of them:
+    //
+    //   1. personal.yml       — the Personal/ page itself
+    //   2. standalone entries — a block carrying type::
+    //   3. standalone entries — a *child* carrying type::
+    //
+    // Routes 2 and 3 need type::-bearing blocks. Without them, removing the
+    // page- and block-level website:: guards leaves the invariant green while
+    // untagged content reaches cv.yml.
     blocksByPage[name] = [{
       content: `- ${spec.section} ${marker}`,
       properties: {
         ...(spec.tagged ? { website: `[[${SITE}]]` } : {}),
         note: `private ${marker}`,
+        type: '[[project]]',
+        start: '[[2024/01]]',
       },
-      children: [{ content: `- detail ${marker}`, properties: {} }],
+      children: [{
+        content: `- detail ${marker}`,
+        properties: { type: '[[project]]', start: '[[2023/05]]' },
+      }],
     }];
+
+    // A block *within* an opted-in page that does not itself carry website::.
+    // The block-level guard is what keeps it out, and it is a privacy boundary
+    // in its own right: opting a page in is not opting in every block on it.
+    if (spec.tagged) {
+      markers.push({ marker: `PRIVATEBLOCK${marker}`, tagged: false, name });
+      blocksByPage[name].push({
+        content: `- PRIVATEBLOCK${marker}`,
+        properties: { type: '[[project]]', start: '[[2022/02]]', note: `PRIVATEBLOCK${marker}` },
+      });
+    }
   });
 
   return { reader: new FixtureGraphReader({ pages, blocksByPage }), markers };
@@ -132,6 +159,34 @@ describe('the Personal/ privacy boundary', () => {
       }),
       { numRuns: 40 },
     );
+  });
+
+  // Documented asymmetry, pinned so it stays a decision rather than an
+  // accident: a *block* on an opted-in page needs its own website:: to be
+  // exported, but a type::-bearing *child* does not — children inherit the
+  // page's opt-in. That is what makes multi-entry pages work (one person, two
+  // degrees), but it does mean a private child on an opted-in page would be
+  // exported. Untagged pages are unaffected: the page-level guard stops them
+  // before children are ever walked.
+  test('a type::-bearing child inherits its page opt-in, unlike a sibling block', async () => {
+    const name = 'Rita Marques';
+    const reader = new FixtureGraphReader({
+      pages: [{ name, originalName: name, properties: { website: `[[${SITE}]]` } }],
+      blocksByPage: {
+        [name]: [{
+          content: '- Rita Marques',
+          properties: { website: `[[${SITE}]]`, type: '[[project]]', start: '[[2024/01]]' },
+          children: [{
+            content: '- CHILDMARKER',
+            properties: { type: '[[project]]', start: '[[2023/01]]' },
+          }],
+        }],
+      },
+    });
+
+    const files = await exportGraph(reader);
+
+    expect(Object.values(files).join('\n')).toContain('CHILDMARKER');
   });
 
   test('a page tagged for a different site is treated as untagged', async () => {

@@ -1407,13 +1407,20 @@ async function runCapture(options = {}) {
     for (const page of pages) {
       const name = page.originalName || page.name;
       if (!name) continue;
-      samples.push({ source: `page:${name}`, properties: page.properties });
+      // The page name is redacted like every value. What makes `seenOn` useful
+      // is *where* a property lives — page vs. block vs. child, and how deep
+      // the namespace goes — not which page it was. Capture reads every page
+      // with no website:: filter (correctly: it is sampling shapes), so an
+      // unredacted name here would put private Personal/ page titles into a
+      // file whose whole purpose is being safe to share.
+      const where = redactToShape(name);
+      samples.push({ source: `page:${where}`, properties: page.properties });
       const blocks = await reader.readPageBlocksTree(name);
       blocksByPage[name] = blocks;
       for (const block of blocks) {
-        samples.push({ source: `block:${name}`, properties: block.properties });
+        samples.push({ source: `block:${where}`, properties: block.properties });
         for (const child of block.children || []) {
-          samples.push({ source: `child:${name}`, properties: child.properties });
+          samples.push({ source: `child:${where}`, properties: child.properties });
         }
       }
     }
