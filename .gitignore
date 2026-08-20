@@ -1,3 +1,7 @@
 node_modules/
 .vite/
 coverage/
+
+# Graph capture output — contains the entire private graph. Never commit.
+_logseq_capture/
+*dump.json
