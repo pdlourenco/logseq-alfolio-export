@@ -123,7 +123,6 @@ describe('export behaviour', () => {
           content: '- key2024',
           properties: { type: '[[publication-override]]', selected: 'true' },
         }],
-        'example.org/Blog Ideas': [],
       });
 
       const { files } = await runExport({ now: FIXED_NOW });
@@ -132,7 +131,9 @@ describe('export behaviour', () => {
       expect(yaml.load(files['cv.yml']).teaching.supervised_students).toHaveLength(1);
       // The namespace page was looked up under the configured site name.
       expect(logseq.Editor.getPageBlocksTree).toHaveBeenCalledWith('example.org/Publication Overrides');
-      expect(logseq.Editor.getPageBlocksTree).toHaveBeenCalledWith('example.org/Blog Ideas');
+      // Blog Ideas is no longer read at all (#8): narrative content is authored
+      // in the site repo, so the plugin never touches that page.
+      expect(logseq.Editor.getPageBlocksTree).not.toHaveBeenCalledWith('example.org/Blog Ideas');
     });
 
     test('pages tagged with a different site are not exported', async () => {

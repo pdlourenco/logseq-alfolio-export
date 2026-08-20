@@ -82,13 +82,27 @@ describe('manifest.json — contract v1', () => {
       expect(manifestFrom(files).files.sort()).toEqual(written);
     });
 
-    test('includes blog posts — they are written after the old manifest was built', async () => {
+    test('emits no blog files, even when the graph still has a Blog Ideas page', async () => {
+      // Scope reduction (#8): narrative content is authored in the site repo.
+      // A graph that still carries the old page must simply be ignored — the
+      // page is not read, and nothing about it reaches the export.
       installGraph({ withBlog: true });
       const { files } = await runExport({ now: FIXED_NOW });
       const listed = manifestFrom(files).files;
 
-      expect(listed).toContain('blog/2026-02-14-a-post-about-filters.md');
+      expect(listed.some((f) => f.startsWith('blog/'))).toBe(false);
       expect(listed.sort()).toEqual(Object.keys(files).sort());
+      expect(listed.sort()).toEqual([
+        'cv.yml', 'manifest.json', 'personal.yml', 'profile.yml', 'publication_overrides.yml',
+      ]);
+    });
+
+    test('every exported path is flat, so no nested storage key is needed', async () => {
+      installGraph({ withBlog: true });
+      const { files } = await runExport({ now: FIXED_NOW });
+      for (const name of Object.keys(files)) {
+        expect(name).not.toContain('/');
+      }
     });
 
     test('is sorted, so the manifest is stable across runs', async () => {

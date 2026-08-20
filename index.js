@@ -1162,7 +1162,6 @@ async function runExport(options = {}) {
 
     // 4. Extract the site namespace (page names follow the configured site)
     const pubOverrides = await extractNamespaceEntries(`${siteName}/Publication Overrides`, cache, reader);
-    const blogIdeas = await extractNamespaceEntries(`${siteName}/Blog Ideas`, cache, reader);
 
     // 5. Extract Personal namespace (only website-tagged)
     const personalPages = {};
@@ -1204,7 +1203,7 @@ async function runExport(options = {}) {
     lint.checkAll([
       cvPages.experience, cvPages.education, cvPages.awards, cvPages.skills,
       cvPages.languages, cvPages.researchInterests, cvPages.profile,
-      standaloneEntries, pubOverrides, blogIdeas,
+      standaloneEntries, pubOverrides,
     ]);
     const sorted = sortExport(cv, personalPages, pubOverridesData);
 
@@ -1214,27 +1213,6 @@ async function runExport(options = {}) {
     files["profile.yml"] = toYAML(profile);
     files["personal.yml"] = toYAML(sorted.personalPages);
     files["publication_overrides.yml"] = toYAML(sorted.pubOverrides);
-
-    // Blog posts as individual files
-    for (const entry of blogIdeas) {
-      if (cleanProp(entry, "status") !== "published") continue;
-      const slug = cleanProp(entry, "slug");
-      const date = convertDate(rawProp(entry, "date"));
-      if (!slug || !date) continue;
-      const filename = `blog/${date}-${slug}.md`;
-      const frontmatter = [
-        "---",
-        `title: "${extractBlockTitle(entry._blockContent) || slug}"`,
-        `date: ${date}`,
-        `categories: ${cleanProp(entry, "categories") || ""}`,
-        `description: ${cleanProp(entry, "description") || ""}`,
-        `tags: ${cleanProp(entry, "tags") || ""}`,
-        "---",
-        "",
-      ].join("\n");
-      // TODO: extract body from sub-bullets
-      files[filename] = frontmatter;
-    }
 
     // 7b. Manifest last: every other file must exist before `files` and
     // `hashes` can describe them. Building it earlier is what made `files`
@@ -1373,9 +1351,12 @@ function summariseShapes(samples) {
 }
 
 /**
- * Check whether sandbox storage accepts a nested key. `runExport` writes
- * `blog/<name>.md`, so if nested keys do not round-trip the export has been
- * silently losing blog posts and the keys need flattening.
+ * Check whether sandbox storage accepts a nested key.
+ *
+ * The export writes only flat keys since blog export was dropped (#8), so
+ * nothing depends on this today. It stays because the answer is a property of
+ * the storage API rather than of this plugin: knowing it costs one probe and
+ * decides whether any future nested output is even possible.
  */
 async function probeNestedKeys(storage) {
   const key = `${CAPTURE_PREFIX}/probe/nested.json`;
@@ -1446,7 +1427,7 @@ async function runCapture(options = {}) {
     console.log("[al-folio] Shape summary:", JSON.stringify(shapes, null, 2));
     console.log(
       `[al-folio] Nested keys ${probe.roundTrips ? "round-trip" : "DO NOT round-trip"} — ` +
-      `blog/*.md ${probe.roundTrips ? "can" : "cannot"} be written as nested storage keys.`,
+      `nested output ${probe.roundTrips ? "is" : "is not"} possible in this storage.`,
     );
     console.log(
       "[al-folio] Find both files by searching your graph directory for " +

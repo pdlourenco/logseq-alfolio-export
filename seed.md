@@ -42,7 +42,7 @@ Four data locations:
 
 1. **`CV/` namespace** — `CV/Profile`, `CV/Experience`, `CV/Education`, `CV/Awards`, `CV/Skills`, `CV/Languages`, `CV/Research Interests`. One page per section, one block per entry.
 2. **`Personal/` namespace** — personal life wiki. Only pages carrying `website:: [[plourenco.eu]]` are exported (`Personal/Music`, `Personal/Cycling & Hiking`, `Personal/DIY`, `Personal/Reading`). Untagged pages (recipes, home-office ideas) stay private. **This opt-in tag is a privacy boundary — never export a `Personal/` page without it.**
-3. **`plourenco.eu/` namespace** — `plourenco.eu/Publication Overrides`, `plourenco.eu/Blog Ideas`.
+3. **`plourenco.eu/` namespace** — `plourenco.eu/Publication Overrides`. (`Blog Ideas` was read until blog export was dropped; see issue #8.)
 4. **Standalone pages** — students, projects, organizations, people. Exported when tagged `website:: [[plourenco.eu]]`.
 
 ### Property conventions
@@ -92,13 +92,13 @@ Logseq does **not** hand plugins raw property strings consistently. Verify empir
 
 `README.md` claims files land at `<graph>/.logseq/plugins/storages/<plugin-id>/`. Other plugins report `<graph>/assets/storages/<plugin-id>/`. **`logseq.Assets.makeSandboxStorage()` is the API in use — find where it actually writes, then fix both `README.md` and `sync.sh`.** There is also a known Logseq bug (`BUG: should not join with empty dir`) when writing via storage APIs; check whether it fires.
 
-Also verify: can `setItem()` create nested paths (`blog/2024-06-15-post.md`)? If not, flatten the key and let `sync.sh` fan out.
+~~Also verify: can `setItem()` create nested paths?~~ **Moot since #8** — the export writes only flat keys now. The capture command still probes it, because the answer is a property of the storage API rather than of this plugin.
 
 ### Known data bugs to fix
 
 - **`Hugo Pereira (PhD)`** — the second degree entry lives as a sibling block whose title carries a disambiguating suffix. Strip `(PhD)`/`(M.Sc.)` suffixes from exported names, or key entries by page rather than block title.
 - **Gil Serrano's supervisors** — the source data had affiliations baked in (`[[Bruno J. Guerreiro (NOVA FCT)]]`). Graph must be cleaned to `[[Bruno J. Guerreiro]]` and person pages created. Add a **validation warning** when a `[[ref]]` contains parentheses, since that usually means an unresolvable page link.
-- **Blog post bodies** — `runExport()` writes front matter only; there is a `// TODO: extract body from sub-bullets`. Implement Logseq-outline → markdown conversion (nested bullets → nested lists, `## headers` preserved, code blocks preserved).
+- ~~**Blog post bodies**~~ — **dropped in #8.** The exporter emitted front matter only, and rather than finish the outline→markdown conversion, blog export was removed entirely: al-folio consumes `_posts/*.md` natively, so posts are authored in the site repo. Logseq is kept for entity data, which is what it is actually good at.
 
 ---
 

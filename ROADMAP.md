@@ -63,7 +63,7 @@ Roles are fixed from here on: the authoring session implements every phase (incl
 | Empirical property-shape validation (P1) | seed.md | ❌ PR 3 (capture) + one human run |
 | Sandbox path verification (P1) | seed.md | ❌ Same human run; then fix README/sync.sh source path |
 | `(PhD)` suffix bug, paren-ref warning (P1) | seed.md | ✅ PR 2 |
-| Blog body extraction (P1) | seed.md | ❌ PR 4 |
+| Blog body extraction (P1) | seed.md | 🚫 dropped — scope reduction (#8) |
 | Validation/lint pass (P2) | seed.md | ✅ PR 2 |
 | Determinism/sorting (P2) | seed.md | ✅ PR 2 |
 | Dry-run mode (P2) | seed.md | ✅ PR 2 |
@@ -167,20 +167,35 @@ exists to prevent, one level up.
 
 - **GraphReader seam inside `index.js`** (no module split): `readAllPages()`, `readPageBlocksTree(name)`, `query(dsl)`. `FileGraphReader` wraps `logseq.Editor.*` / `logseq.DB.*`; `FixtureGraphReader` loads a JSON dump. `ResolutionCache`, extractors, and `runExport` accept a reader. Migrate existing tests from `logseq.*` global mocks to `FixtureGraphReader` where that simplifies them.
 - **Capture command** (new palette command): dumps raw `getAllPages()` plus block trees per page as JSON to sandbox storage. Output is gitignored and **never committed** (may contain the full private graph).
-- **Human step — the only one in the roadmap**: repo owner runs capture on the real graph, and records (a) where `makeSandboxStorage()` actually writes, (b) whether nested keys (`blog/…`) work. Fix README + `sync.sh` *source* path accordingly (the destination was fixed in PR 0).
+- **Human step — the only one in the roadmap**: repo owner runs capture on the real graph, and records (a) where `makeSandboxStorage()` actually writes, (b) whether nested keys work (informational since #8). Fix README + `sync.sh` *source* path accordingly (the destination was fixed in PR 0).
 - **Synthetic fixture regeneration**: from the local capture, rewrite `tests/__fixtures__/` as synthetic data matching the observed shapes (string vs. array properties, key casing, alias format). Only synthetic data is committed.
 - **Snapshot contract tests**: full `cv.yml` / `profile.yml` / `personal.yml` / `manifest.json` generated from the synthetic fixture graph, as Vitest snapshots — taken only now, after PR 1 (serializer fixed) and PR 2.5 (manifest conforms). A snapshot diff = intentional contract change = `schema_version` discussion + seed.md note.
 - **Privacy property test**: randomly generated graphs with mixed tagged/untagged `Personal/` pages — assert untagged `Personal/` content never reaches any output file, and `runExport` never throws.
 
 **Acceptance:** snapshot suite runs offline with no `logseq` global on the fixture path; snapshotted outputs validate against the contract v1 schemas; privacy property test present; no real names or private data in any committed file; capture output path in `.gitignore`.
 
-## PR 4 — Blog bodies + DB-graph prep
+## PR 5 — Scope reduction: drop blog export (#8)
 
-- Outline→markdown converter (pure function): nested bullets → nested lists, `##` headers preserved, code blocks preserved, property lines excluded. Unit tests + properties (no `::` property lines in output; balanced code fences).
+Removes the blog loop, the `Blog Ideas` extraction, and the body-extraction TODO
+with them. Narrative content is authored as markdown in the site repo, which
+al-folio consumes natively; Logseq keeps the entity data it is good at.
+
+No `schema_version` bump: every staged file is optional in the consumer
+(`if not path.exists(): continue`, `if blog_dir.is_dir()`), so absence is not a
+shape change. Migration is automatic — D64 pruning deletes the `blog/*.md` that
+earlier exports staged, the first time the new export runs.
+
+`personal.yml` is deliberately **not** part of this: it feeds `_data/personal.yml`
+*and* `_books/*.md`, and the site prunes generated files whose source disappears,
+so dropping it deletes those pages unless the content is re-authored first. That
+is a separate, sequenced decision.
+
+## PR 4 — DB-graph prep
+
 - DB prep: add `"unsupportedGraphType": "db"` to the `logseq` block of `package.json`; bump the `@logseq/libs` CDN pin in `index.html` (human verifies the plugin still loads); runtime guard via `checkCurrentIsDbGraph()` with a clear "file graphs only" message; note the namespace→tag migration risk in seed.md.
 - A real DB-graph reader is explicitly **out of scope** — blocked on Logseq DB plugin-API maturity. The PR 3 adapter is its future insertion point.
 
-**Acceptance:** converter handles a representative outline fixture; blog files in the export now include bodies; guard is a no-op on file graphs; snapshot diffs from added blog bodies are intentional and accompanied by the contract-discipline steps below.
+**Acceptance:** guard is a no-op on file graphs; the plugin refuses to load on a DB graph rather than misbehaving; any snapshot diff is intentional and accompanied by the contract-discipline steps below.
 
 ---
 
