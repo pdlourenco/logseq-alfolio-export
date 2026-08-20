@@ -89,9 +89,8 @@ learned (`thesis-type`, `supervisor`), which is what makes the file useful, and 
 key name is not private the way a page title is. If your graph uses key names
 that are themselves sensitive, don't share the file.
 
-The capture also probes whether nested storage keys (`blog/post.md`) round-trip,
-and prints where to find the files, which answers where the sandbox actually
-writes.
+The capture also probes whether nested storage keys round-trip, and prints where
+to find the files, which answers where the sandbox actually writes.
 
 ### Validation warnings
 
@@ -131,13 +130,14 @@ real site checkout by accident.
 
 The sync script copies into `_incoming/` and nowhere else. It copies **exactly
 what the export's `manifest.json` lists** — `cv.yml`, `profile.yml`,
-`personal.yml`, `publication_overrides.yml`, `blog/*.md`, and the manifest
-itself — rather than globbing, so a file left over from an earlier run in the
-plugin's storage is never staged.
+`personal.yml`, `publication_overrides.yml`, and the manifest itself — rather
+than globbing, so a file left over from an earlier run in the plugin's storage
+is never staged.
 
 It also **prunes**: files the *previous* manifest listed that this export no
-longer writes are deleted, so a blog post removed from your graph does not
-linger in `_incoming/`. Pruning is deliberately conservative:
+longer writes are deleted, so an entry removed from your graph does not linger
+in `_incoming/`. (This is also what cleans up `blog/*.md` staged by exports
+from before blog export was dropped.) Pruning is deliberately conservative:
 
 - It never clears the directory. `_incoming/` also holds files the plugin does
   not own — the site's own `README.md`, and `papers.src.bib` staged by hand.
@@ -193,10 +193,6 @@ From **Personal/ namespace** pages tagged `website:: [[plourenco.eu]]`:
 
 From **plourenco.eu/Publication Overrides** — `selected`, `abbr`, `preview` per cite-key.
 
-### Blog posts (`blog/*.md`)
-
-From **plourenco.eu/Blog Ideas** — only entries with `status:: published`.
-
 ## Resolution logic
 
 The plugin resolves data at export time:
@@ -246,9 +242,7 @@ Exported files are written to the plugin's sandbox storage:
 ├── profile.yml
 ├── personal.yml
 ├── publication_overrides.yml
-├── manifest.json
-└── blog/
-    └── 2024-06-15-gnc-simulation-pipeline.md
+└── manifest.json
 ```
 
 `manifest.json` describes the export for the consuming site:
@@ -259,7 +253,7 @@ Exported files are written to the plugin's sandbox storage:
 | `exported_at` | ISO 8601 timestamp. Informational. |
 | `plugin_version` | Read from `package.json`, so it cannot disagree with what shipped. Omitted with a warning if unreadable. |
 | `website` | The site tag pages were filtered on. |
-| `files` | Every file in the export, including `manifest.json` and blog posts. |
+| `files` | Every file in the export, including `manifest.json` itself. |
 | `hashes` | SHA-256 per file, excluding `manifest.json` itself — detects a truncated or half-finished copy. Omitted with a warning if WebCrypto is unavailable. |
 | `counts` | Per-section entry counts, as a sanity check. |
 

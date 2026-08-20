@@ -5,6 +5,12 @@
 // These drive the real script through bash against throwaway directories,
 // because the rest of the suite covers index.js only and would not catch a
 // regression here.
+//
+// Nested `blog/*.md` paths still appear in these fixtures although the plugin
+// no longer emits them (#8). That is deliberate: sync.sh is manifest-driven and
+// must still handle nested paths, and the first sync after the scope reduction
+// has to *prune* blog files staged by earlier exports. Dropping this coverage
+// would drop the migration case with it.
 
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
