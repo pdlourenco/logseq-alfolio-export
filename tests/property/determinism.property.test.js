@@ -14,83 +14,12 @@ if (process.env.CI) fc.configureGlobal({ seed: 42 });
 const SITE = 'plourenco.eu';
 const FIXED_NOW = new Date('2026-03-01T12:00:00.000Z');
 
-const cvEntry = (props, content) => ({ content, properties: props });
+// The graph lives in a committed fixture because the cross-repo CI sample (#10)
+// drives the same one — a determinism guarantee proven against a different
+// graph than the one shipped to the consumer would prove less than it looks.
+const { buildSyntheticGraph } = require('../__fixtures__/syntheticGraph.js');
 
-/** A synthetic graph with enough of each section to have an order at all. */
-function buildGraph() {
-  const cvBlocks = {
-    'CV/Experience': [
-      cvEntry({ type: '[[experience]]', position: 'Engineer', organization: '[[Orbital Systems]]', start: '[[2019/03]]' }, '- Engineer'),
-      cvEntry({ type: '[[experience]]', position: 'Researcher', organization: '[[UDEX]]', start: '[[2022/01]]' }, '- Researcher'),
-      cvEntry({ type: '[[experience]]', position: 'Intern', organization: '[[Orbital Systems]]', start: '[[2016/06]]' }, '- Intern'),
-    ],
-    'CV/Education': [
-      cvEntry({ type: '[[education]]', degree: 'PhD', start: '[[2018/09]]' }, '- PhD'),
-      cvEntry({ type: '[[education]]', degree: 'MSc', start: '[[2015/09]]' }, '- MSc'),
-    ],
-    'CV/Awards': [
-      cvEntry({ type: '[[award]]', date: '[[2021/05]]', awarder: '[[UDEX]]' }, '- Best Paper'),
-      cvEntry({ type: '[[award]]', date: '[[2019/11]]', awarder: '[[Orbital Systems]]' }, '- Merit Grant'),
-    ],
-    'CV/Skills': [
-      cvEntry({ type: '[[skill]]', group: 'Programming', level: '4' }, '- Rust'),
-      cvEntry({ type: '[[skill]]', group: 'Programming', level: '5' }, '- C'),
-      cvEntry({ type: '[[skill]]', group: 'Control', level: '5' }, '- GNC'),
-    ],
-    'CV/Languages': [
-      cvEntry({ type: '[[language]]', speaking: '5' }, '- Portuguese'),
-      cvEntry({ type: '[[language]]', speaking: '4' }, '- English'),
-    ],
-    'CV/Research Interests': [
-      cvEntry({ type: '[[research-interest]]', group: 'Robotics', level: '5' }, '- Estimation'),
-      cvEntry({ type: '[[research-interest]]', group: 'Robotics', level: '4' }, '- Control'),
-    ],
-    'CV/Profile': [
-      cvEntry({ 'name-long': 'Test Person', 'email-personal': 'a@b.c' }, '- Profile'),
-    ],
-    [`${SITE}/Publication Overrides`]: [],
-    [`${SITE}/Blog Ideas`]: [],
-  };
-
-  const standalone = [
-    { name: 'Ana Silva', type: 'student', start: '[[2021/09]]' },
-    { name: 'Bruno Costa', type: 'student', start: '[[2019/09]]' },
-    { name: 'Nav Filter', type: 'project', start: '[[2022/01]]' },
-    { name: 'Sim Pipeline', type: 'project', start: '[[2020/04]]' },
-  ].map(({ name, type, start }) => ({
-    page: { name, originalName: name, properties: { website: `[[${SITE}]]` } },
-    blocks: [{
-      content: `- ${name}`,
-      properties: {
-        website: `[[${SITE}]]`,
-        type: `[[${type}]]`,
-        start,
-        ...(type === 'student'
-          ? { university: '[[UDEX]]', supervisor: 'Prof. [[Miguel Antunes]]', 'thesis-type': 'MSc' }
-          : {}),
-      },
-    }],
-  }));
-
-  const personal = ['Personal/Music', 'Personal/Reading'].map((name) => ({
-    page: { name, originalName: name, properties: { website: `[[${SITE}]]` } },
-    blocks: [{ content: `- ${name}`, properties: { website: `[[${SITE}]]` }, children: [] }],
-  }));
-
-  const supportPages = [
-    { name: 'UDEX', originalName: 'UDEX', properties: { icon: 'ist', abbreviation: 'UDEX' } },
-    { name: 'Orbital Systems', originalName: 'Orbital Systems', properties: { icon: 'gmv' } },
-    { name: 'Miguel Antunes', originalName: 'Miguel Antunes', properties: { type: '[[person]]', affiliation: '[[UDEX]]' } },
-  ];
-
-  return {
-    pages: [...supportPages, ...standalone.map((s) => s.page), ...personal.map((p) => p.page)],
-    blocksByPage: {
-      ...cvBlocks,
-      ...Object.fromEntries([...standalone, ...personal].map((e) => [e.page.originalName, e.blocks])),
-    },
-  };
-}
+const buildGraph = () => buildSyntheticGraph({ site: SITE });
 
 /** Reorder an array by a permutation of its indices. */
 const permute = (arr, order) => order.map((i) => arr[i]);
